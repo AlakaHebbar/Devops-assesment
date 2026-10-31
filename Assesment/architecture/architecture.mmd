@@ -1,0 +1,55 @@
+flowchart LR
+    users["Users / browsers"] --> r53["Amazon Route 53"]
+    r53 --> waf["AWS WAFv2<br/>Web ACL"]
+    waf --> alb["Application Load Balancer<br/>ACM TLS certificate"]
+
+    repo["Git repository<br/>application + Helm config"] --> ci["GitHub Actions CI<br/>test · scan · sign"]
+    ci -->|"OIDC assume-role; push image"| ecr["Amazon ECR<br/>immutable image tags"]
+
+    subgraph aws["AWS production account / region"]
+        subgraph vpc["Amazon VPC · 3 Availability Zones"]
+            subgraph public["Public subnets · each AZ"]
+                alb
+                nat["NAT Gateway per AZ"]
+            end
+            subgraph private["Private EKS subnets · each AZ"]
+                subgraph eks["Amazon EKS regional cluster"]
+                    api["AWS-managed EKS control plane<br/>private API endpoint · audit logs"]
+                    subgraph nodes["EC2 managed node groups"]
+                        ing["AWS Load Balancer Controller"]
+                        svc["Kubernetes internal Service"]
+                        app["Next.js Deployment<br/>replicas · probes · HPA"]
+                        fluent["Fluent Bit DaemonSet<br/>buffer + retry"]
+                        argocd["Argo CD<br/>GitOps reconciler"]
+                        ing --> svc --> app
+                        app -. "stdout / stderr" .-> fluent
+                        argocd -. "reconciles manifests" .-> app
+                    end
+                end
+            end
+            endpoints["VPC endpoints<br/>ECR · S3 · STS · Secrets Manager · Logs"]
+        end
+
+        secrets["AWS Secrets Manager<br/>KMS encryption"]
+        s3["Amazon S3 log archive<br/>Block Public Access · SSE-KMS<br/>versioning · lifecycle/retention"]
+        cw["Amazon CloudWatch<br/>EKS control-plane logs · metrics · alarms"]
+        sns["Amazon SNS<br/>alert notifications"]
+        state["Terraform state S3 bucket<br/>versioning · SSE-KMS · lock file"]
+        iam["AWS IAM + EKS Pod Identity<br/>separate least-privilege roles"]
+
+        alb --> ing
+        app -. "private AWS API access" .-> endpoints
+        app -. "Pod Identity: read app secrets" .-> secrets
+        fluent -->|"Pod Identity: write log prefix"| s3
+        api -->|"control-plane audit/API/authenticator logs"| cw
+        app -. "metrics / container insights" .-> cw
+        cw --> sns
+        app -. "egress only when required" .-> nat
+        ecr -. "node IAM role: pull image via endpoint" .-> app
+        iam -. "Pod Identity associations / policies" .-> app
+        iam -. "Pod Identity associations / policies" .-> fluent
+        iam -. "Pod Identity associations / policies" .-> ing
+    end
+
+    repo -. "reviewed desired state" .-> argocd
+    ci -. "Terraform plan/apply role; approval gated" .-> state

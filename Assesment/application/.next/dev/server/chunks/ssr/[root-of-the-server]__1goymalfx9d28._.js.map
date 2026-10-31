@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 10, "column": 0}, "map": {"version":3,"sources":["file:///Users/alaka/Documents/Alaka_learning/New/application/src/app/page.tsx"],"sourcesContent":["export default function Home() {\n  return (\n    <main style={{ display: \"grid\", minHeight: \"100vh\", placeItems: \"center\" }}>\n      <h1 style={{ fontSize: \"clamp(3rem, 12vw, 8rem)\", fontWeight: 800, letterSpacing: \"-0.06em\" }}>\n        Hello World\n      </h1>\n    </main>\n  );\n}\n"],"names":["Home","style","display","minHeight","placeItems","fontSize","fontWeight","letterSpacing"],"mappings":";;;;;;AAAe,SAASA;IACtB,qBACE,8OAAC;QAAKC,OAAO;YAAEC,SAAS;YAAQC,WAAW;YAASC,YAAY;QAAS;kBACvE,cAAA,8OAAC;YAAGH,OAAO;gBAAEI,UAAU;gBAA2BC,YAAY;gBAAKC,eAAe;YAAU;sBAAG;;;;;;;;;;;AAKrG"}}]
+}
