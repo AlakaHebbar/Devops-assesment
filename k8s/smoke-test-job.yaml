@@ -1,7 +1,8 @@
 # Argo CD PostSync hook: after every sync, call the BFF health endpoint through
-# the Service. A non-200 response fails the sync, so the Application is marked
-# degraded and the deploy commit can be reverted. Readiness probes on the same
-# endpoint gate the Deployment's own health.
+# the Service. A non-2xx response fails the sync operation (the automated retry
+# policy then tries again), which flags the release for a revert. Application
+# health itself comes from the resources: the Deployment is Healthy only when
+# its pods pass readiness probes on the same endpoint.
 apiVersion: batch/v1
 kind: Job
 metadata:

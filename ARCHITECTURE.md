@@ -179,11 +179,13 @@ Each has automated sync with prune and self-heal, and pinned chart versions. Fai
   - Every committed change is applied, deleted manifests are pruned, and manual edits in the cluster are reverted.
   - The only ignored drift is `Deployment.spec.replicas`, which the HPA owns (`RespectIgnoreDifferences=true`).
 - **Health from the BFF endpoint:**
-  - The Deployment is only Healthy once its pods pass readiness probes on `/api/health`.
-  - The ALB target group checks the same path.
-  - After each sync, a `PostSync` hook Job ([`k8s/smoke-test-job.yaml`](k8s/smoke-test-job.yaml)) calls `http://next-bff-service:3000/api/health` through the Service. Anything other than a 2xx fails the sync.
-- **Rollback:** `git revert <deploy commit>` and push. Argo CD syncs the earlier tag within its 3-minute poll. Immutable tags guarantee it's the same image as before.
-- **Deleting the Application:** it has no `resources-finalizer`, on purpose. Deleting the Application doesn't delete the running service.
+  - **Application health:** comes from its resources. The Deployment is only Healthy once its pods pass readiness probes on `/api/health`, and the ALB target group checks the same path.
+  - **Sync result:** after each sync, a `PostSync` hook Job ([`k8s/smoke-test-job.yaml`](k8s/smoke-test-job.yaml)) calls `http://next-bff-service:3000/api/health` through the Service. Anything other than a 2xx marks the sync operation Failed, and the retry policy tries again.
+- **Rollback:** `git revert <deploy commit>` and push. Argo CD syncs the earlier tag within its 3-minute poll.
+  - Immutable tags guarantee it's the same image as before.
+  - ECR keeps the last 50 tagged images, which sets how far back a revert can go.
+  - The revert starts no build (no app code changed), and the next app push deploys normally.
+- **Deleting an ApplicationSet or Application:** every ApplicationSet sets `preserveResourcesOnDeletion: true`. Without it, Argo CD adds a resources finalizer to generated Applications, so deleting an ApplicationSet file from Git, or the cluster Secret no longer matching its selector, would delete the running service. With it, removal leaves workloads running.
 
 ### Infrastructure pipeline: [`.github/workflows/infra.yml`](.github/workflows/infra.yml)
 

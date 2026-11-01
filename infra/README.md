@@ -93,7 +93,7 @@ From then on, every change inside the cluster, including add-on and Argo CD upgr
 ## 5. Deploy and roll back the service
 
 - **Deploy:** merge to `main`. `app-ci` builds, scans and pushes `<ecr>/next-bff-service:<sha>`, then commits that tag to `k8s/kustomization.yaml`. Argo CD syncs it.
-- **Roll back:** revert the deploy commit:
+- **Roll back:** revert the deploy commit. ECR keeps the last 50 tagged images, so the target must be one of those.
 
   ```bash
   git revert <deploy-commit> && git push

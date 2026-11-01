@@ -8,6 +8,11 @@ metadata:
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
+  # Without this, generated Applications get a resources finalizer: deleting
+  # this ApplicationSet (or the cluster no longer matching the generator) would
+  # delete everything it deployed. Removal must never take production down.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
   generators:
     - clusters:
         selector:
