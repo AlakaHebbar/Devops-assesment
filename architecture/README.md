@@ -5,7 +5,14 @@
 - **Source:** [architecture.mmd](architecture.mmd) (Mermaid). The exported images [architecture.svg](architecture.svg) and [architecture.png](architecture.png) are generated from it.
 - **Narrative and rationale:** [../ARCHITECTURE.md](../ARCHITECTURE.md).
 
-Regenerate the images after editing the source:
+GitOps diagrams (embedded in [ARCHITECTURE.md](../ARCHITECTURE.md#cicd-and-gitops)):
+
+| Diagram | Source | Images |
+|---|---|---|
+| Components and the numbered deploy path, plus self-heal and rollback | [gitops-flow.mmd](gitops-flow.mmd) | [svg](gitops-flow.svg) · [png](gitops-flow.png) |
+| Deploy and rollback as a timeline | [gitops-deploy-sequence.mmd](gitops-deploy-sequence.mmd) | [svg](gitops-deploy-sequence.svg) · [png](gitops-deploy-sequence.png) |
+
+Regenerate the images after editing a source (same commands, with the file name changed):
 
 ```bash
 npx -y @mermaid-js/mermaid-cli -i architecture/architecture.mmd -o architecture/architecture.svg -b white

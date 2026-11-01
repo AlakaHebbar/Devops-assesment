@@ -118,6 +118,12 @@ A 3-stage build (deps → build → runner) using Next.js `standalone` output, s
 
 CI only builds and changes Git. Argo CD deploys whatever is in Git to the cluster.
 
+![GitOps flow: CI changes Git, Argo CD changes the cluster](architecture/gitops-flow.svg)
+
+The numbers follow one deploy. Dotted lines show self-heal (a manual change is reverted) and rollback (a revert commit). The same deploy as a timeline, including rollback:
+
+![Deploy and rollback sequence](architecture/gitops-deploy-sequence.svg)
+
 **No pipeline can reach the cluster:**
 - No workflow runs `kubectl`, Helm or a Kubernetes provider.
 - No CI role has an EKS access entry, so even the Terraform apply role can't authenticate to the Kubernetes API.
