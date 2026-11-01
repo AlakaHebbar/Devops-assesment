@@ -24,6 +24,12 @@ variable "state_bucket_arn" {
   type        = string
 }
 
+variable "plan_state_key" {
+  description = "State object the plan role may read; the stack CI plans (infra.yml)."
+  type        = string
+  default     = "prod/core.tfstate"
+}
+
 variable "state_kms_key_arn" {
   description = "KMS key that encrypts the Terraform state."
   type        = string

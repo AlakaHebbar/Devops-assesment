@@ -53,9 +53,17 @@ resource "aws_iam_role_policy_attachment" "plan_read_only" {
 
 data "aws_iam_policy_document" "plan" {
   statement {
-    sid       = "ReadState"
-    actions   = ["s3:GetObject", "s3:ListBucket"]
-    resources = [var.state_bucket_arn, "${var.state_bucket_arn}/*"]
+    sid       = "ListStateBucket"
+    actions   = ["s3:ListBucket"]
+    resources = [var.state_bucket_arn]
+  }
+
+  # Only the state of the stack CI plans. Other states in the bucket (notably
+  # gitops-bootstrap, which holds the Argo CD deploy key) stay unreadable.
+  statement {
+    sid       = "ReadPlannedState"
+    actions   = ["s3:GetObject"]
+    resources = ["${var.state_bucket_arn}/${var.plan_state_key}"]
   }
 
   statement {
@@ -64,13 +72,14 @@ data "aws_iam_policy_document" "plan" {
     resources = [var.state_kms_key_arn]
   }
 
-  # ReadOnlyAccess can read every object in the account. Plans only need the
-  # state bucket, so keep application logs and other data out of reach.
+  # ReadOnlyAccess can read every object in the account. Plans only need one
+  # state file, so application logs, other states and all other data stay out
+  # of reach; an explicit deny wins over ReadOnlyAccess.
   statement {
-    sid           = "DenyObjectReadsOutsideState"
+    sid           = "DenyObjectReadsOutsidePlannedState"
     effect        = "Deny"
     actions       = ["s3:GetObject", "s3:GetObjectVersion"]
-    not_resources = ["${var.state_bucket_arn}/*"]
+    not_resources = ["${var.state_bucket_arn}/${var.plan_state_key}"]
   }
 }
 

@@ -196,8 +196,8 @@ Each has automated sync with prune and self-heal, and pinned chart versions. Fai
 
 - **What it manages:** the core stack only, all through AWS APIs. Jobs run on GitHub-hosted runners. The gitops-bootstrap stack is validated here, but applied once by an operator: it's the only Terraform that talks to Kubernetes.
 - **Roles** ([`modules/ci-terraform`](infra/modules/ci-terraform)):
-  - **`ci-terraform-plan`** is trusted only for `repo:<repo>:pull_request`. It has `ReadOnlyAccess` plus read access on the state bucket and its KMS key.
-    - An explicit deny blocks S3 object reads outside the state bucket, so application logs stay out of reach.
+  - **`ci-terraform-plan`** is trusted only for `repo:<repo>:pull_request`. It has `ReadOnlyAccess`, plus read access on **one** state object (`prod/core.tfstate`) and the state KMS key.
+    - An explicit deny blocks every other S3 object read. Application logs stay out of reach, and so does the gitops-bootstrap state, which holds the Argo CD deploy key.
     - PRs from forks get no OIDC token, so they never reach it.
   - **`ci-terraform-apply`** is trusted only for `repo:<repo>:environment:production`, so GitHub won't issue the token until the environment's reviewers approve.
   - Neither role has an EKS access entry.
