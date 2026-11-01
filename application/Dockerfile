@@ -1,21 +1,21 @@
 # syntax=docker/dockerfile:1
 
-# Pin by digest in CI (node:22-alpine@sha256:...) for fully reproducible builds.
-ARG NODE_IMAGE=node:22-alpine
+# Base image pinned by digest for reproducible builds; Dependabot (docker)
+# updates the FROM lines together.
 
-FROM ${NODE_IMAGE} AS deps
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 
-FROM ${NODE_IMAGE} AS builder
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM ${NODE_IMAGE} AS runner
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runner
 ARG VERSION=dev
 ARG GIT_SHA=unknown
 

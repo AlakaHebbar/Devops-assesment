@@ -6,6 +6,11 @@ node_modules/
 # Local env
 .env
 
+# Keys and certificates (e.g. the Argo CD deploy key from infra/README.md)
+argocd-deploy-key*
+*.pem
+*.key
+
 # Terraform
 .terraform/
 *.tfstate
@@ -15,3 +20,11 @@ crash.log
 *.tfvars
 !*.tfvars.example
 backend.hcl
+
+# CI-generated plan output
+infra/**/tfplan
+infra/**/plan.txt
+infra/**/comment.md
+
+# IDE
+.idea/

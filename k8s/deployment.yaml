@@ -6,6 +6,7 @@ metadata:
     app: next-bff-service
 spec:
   # Replica count is owned by the HPA (hpa.yaml); this is only the initial value.
+  # The Argo CD Application ignores drift on this field so self-heal does not fight the HPA.
   replicas: 3
   revisionHistoryLimit: 5
   selector:
@@ -47,8 +48,9 @@ spec:
               app: next-bff-service
       containers:
         - name: next-bff-service
-          # Immutable tag (version or commit SHA) from ECR; never "latest".
-          image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/next-bff-service:0.1.0
+          # Logical name; kustomization.yaml maps it to the ECR repository and the
+          # commit-SHA tag that CI writes. Tags are immutable, never "latest".
+          image: next-bff-service
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

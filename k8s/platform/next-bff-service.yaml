@@ -1,0 +1,84 @@
+# The service: watches k8s/ on main and applies every change. Automated sync
+# with prune and self-heal reverts manual changes in the cluster. Roll back by
+# reverting the deploy commit in Git.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: next-bff-service
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  # Without this, generated Applications get a resources finalizer: deleting
+  # this ApplicationSet (or the cluster no longer matching the generator) would
+  # delete everything it deployed. Removal must never take production down.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            environment: prod
+  template:
+    metadata:
+      name: next-bff-service
+    spec:
+      project: next-bff
+      source:
+        repoURL: '{{ .metadata.annotations.gitops_repo_url }}'
+        targetRevision: '{{ .metadata.annotations.gitops_revision }}'
+        path: k8s
+        kustomize:
+          # Environment values from the core stack (cluster-Secret annotations),
+          # so the manifests don't hardcode hostnames, ARNs or the VPC range.
+          patches:
+            - target:
+                kind: Ingress
+                name: next-bff-service
+              patch: |
+                - op: add
+                  path: /spec/rules/0/host
+                  value: {{ .metadata.annotations.domain_name }}
+                - op: add
+                  path: /metadata/annotations/alb.ingress.kubernetes.io~1certificate-arn
+                  value: {{ .metadata.annotations.certificate_arn }}
+                - op: add
+                  path: /metadata/annotations/alb.ingress.kubernetes.io~1wafv2-acl-arn
+                  value: {{ .metadata.annotations.web_acl_arn }}
+                - op: add
+                  path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
+                  value: {{ .metadata.annotations.domain_name }}
+            - target:
+                kind: NetworkPolicy
+                name: next-bff-service
+              patch: |
+                - op: test
+                  path: /spec/ingress/0/from/0/ipBlock/cidr
+                  value: 10.20.0.0/16
+                - op: replace
+                  path: /spec/ingress/0/from/0/ipBlock/cidr
+                  value: {{ .metadata.annotations.vpc_cidr }}
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ .metadata.annotations.service_namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=false # k8s/namespace.yaml carries the Pod Security labels
+          - PrunePropagationPolicy=foreground
+          - RespectIgnoreDifferences=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m
+      # The HPA owns the replica count.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          name: next-bff-service
+          jsonPointers:
+            - /spec/replicas

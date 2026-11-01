@@ -1,0 +1,47 @@
+# Argo CD manages itself: the same chart and values file the bootstrap used.
+# Upgrade Argo CD by changing targetRevision or values/argo-cd.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: argo-cd
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  # Without this, generated Applications get a resources finalizer: deleting
+  # this ApplicationSet (or the cluster no longer matching the generator) would
+  # delete everything it deployed. Removal must never take production down.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            environment: prod
+  template:
+    metadata:
+      name: argo-cd
+    spec:
+      project: platform
+      sources:
+        - repoURL: https://argoproj.github.io/argo-helm
+          chart: argo-cd
+          targetRevision: 10.11.6
+          helm:
+            # Same release name as the bootstrap, so resources are adopted.
+            releaseName: argo-cd
+            valueFiles:
+              - $values/k8s/platform/values/argo-cd.yaml
+        - repoURL: '{{ .metadata.annotations.gitops_repo_url }}'
+          targetRevision: '{{ .metadata.annotations.gitops_revision }}'
+          ref: values
+      destination:
+        server: '{{ .server }}'
+        namespace: argocd
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          # The Argo CD CRDs are too large for client-side apply annotations.
+          - ServerSideApply=true

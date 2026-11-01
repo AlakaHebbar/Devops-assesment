@@ -2,14 +2,19 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: next-bff
 resources:
-  - namespace.yaml
-  - serviceaccount.yaml
-  - deployment.yaml
-  - service.yaml
-  - ingress.yaml
-  - hpa.yaml
-  - pdb.yaml
-  - networkpolicy.yaml
+- namespace.yaml
+- serviceaccount.yaml
+- deployment.yaml
+- service.yaml
+- ingress.yaml
+- hpa.yaml
+- pdb.yaml
+- networkpolicy.yaml
+- smoke-test-job.yaml
+# Updated by CI (.github/workflows/app-ci.yml) with `kustomize edit set image`
+# after each image push to main. Argo CD deploys whatever is committed here;
+# roll back by reverting the deploy commit.
 images:
-  - name: 123456789012.dkr.ecr.us-east-1.amazonaws.com/next-bff-service
-    newTag: 0.1.0
+- name: next-bff-service
+  newName: 123456789012.dkr.ecr.us-east-1.amazonaws.com/next-bff-service
+  newTag: 0.1.0

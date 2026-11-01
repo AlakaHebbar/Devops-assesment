@@ -1,92 +1,94 @@
-# AWS architecture design: Next.js on Amazon EKS
+# Architecture design: Next.js on Amazon EKS with GitOps
 
-This is an AWS-specific reference diagram. Its standalone Mermaid source is [architecture.mmd](architecture.mmd); the overview and implementation sequence are in [../ARCHITECTURE.md](../ARCHITECTURE.md). The diagram shows one production AWS account/region, a VPC across three Availability Zones, and the AWS managed services around the EKS workload.
+![Architecture diagram](architecture.svg)
 
-```mermaid
-flowchart LR
-    users["Users / browsers"] --> r53["Amazon Route 53"]
-    r53 --> waf["AWS WAFv2<br/>Web ACL"]
-    waf --> alb["Application Load Balancer<br/>ACM TLS certificate"]
+- **Source:** [architecture.mmd](architecture.mmd) (Mermaid). The exported images [architecture.svg](architecture.svg) and [architecture.png](architecture.png) are generated from it.
+- **Narrative and rationale:** [../ARCHITECTURE.md](../ARCHITECTURE.md).
 
-    repo["Git repository<br/>application + k8s manifests"] --> ci["GitHub Actions CI (planned)<br/>build · push"]
-    ci -->|"OIDC assume-role; push image"| ecr["Amazon ECR<br/>immutable image tags"]
+GitOps diagrams (embedded in [ARCHITECTURE.md](../ARCHITECTURE.md#cicd-and-gitops)):
 
-    subgraph aws["AWS production account / region"]
-        subgraph vpc["Amazon VPC · 3 Availability Zones"]
-            subgraph public["Public subnets · each AZ"]
-                alb
-                nat["NAT Gateway per AZ"]
-            end
-            subgraph private["Private EKS subnets · each AZ"]
-                subgraph eks["Amazon EKS regional cluster"]
-                    api["AWS-managed EKS control plane<br/>private API endpoint · audit logs"]
-                    subgraph nodes["EC2 managed node groups"]
-                        ing["AWS Load Balancer Controller"]
-                        svc["Kubernetes internal Service"]
-                        app["Next.js Deployment<br/>replicas · probes · HPA"]
-                        fluent["Fluent Bit DaemonSet<br/>buffer + retry"]
-                        extdns["external-dns<br/>Route 53 alias records"]
-                        metrics["metrics-server<br/>feeds HPA"]
-                        argocd["Argo CD (planned)<br/>GitOps reconciler"]
-                        ing --> svc --> app
-                        app -. "stdout / stderr" .-> fluent
-                        argocd -. "reconciles manifests" .-> app
-                        metrics -. "CPU metrics" .-> app
-                    end
-                end
-            end
-            endpoints["VPC endpoints<br/>ECR · S3 · STS · EKS Auth · Secrets Manager · Logs"]
-        end
+| Diagram | Source | Images |
+|---|---|---|
+| Components and the numbered deploy path, plus self-heal and rollback | [gitops-flow.mmd](gitops-flow.mmd) | [svg](gitops-flow.svg) · [png](gitops-flow.png) |
+| Deploy and rollback as a timeline | [gitops-deploy-sequence.mmd](gitops-deploy-sequence.mmd) | [svg](gitops-deploy-sequence.svg) · [png](gitops-deploy-sequence.png) |
 
-        secrets["AWS Secrets Manager<br/>KMS encryption"]
-        s3["Amazon S3 log archive<br/>Block Public Access · SSE-KMS<br/>versioning · lifecycle/retention"]
-        cw["Amazon CloudWatch<br/>EKS control-plane logs · metrics · alarms"]
-        sns["Amazon SNS<br/>alert notifications"]
-        state["Terraform state S3 bucket<br/>versioning · SSE-KMS · lock file"]
-        iam["AWS IAM + EKS Pod Identity<br/>separate least-privilege roles"]
+Regenerate the images after editing a source (same commands, with the file name changed):
 
-        alb --> ing
-        app -. "private AWS API access" .-> endpoints
-        app -. "Pod Identity: read app secrets" .-> secrets
-        fluent -->|"Pod Identity: write log prefix"| s3
-        api -->|"control-plane audit/API/authenticator logs"| cw
-        app -. "metrics / container insights" .-> cw
-        cw --> sns
-        app -. "egress only when required" .-> nat
-        ecr -. "node IAM role: pull image via endpoint" .-> app
-        iam -. "Pod Identity associations / policies" .-> app
-        iam -. "Pod Identity associations / policies" .-> fluent
-        iam -. "Pod Identity associations / policies" .-> ing
-        iam -. "Pod Identity associations / policies" .-> extdns
-        extdns -->|"upsert alias record"| r53
-    end
-
-    repo -. "reviewed desired state" .-> argocd
-    ci -. "Terraform plan/apply role; approval gated" .-> state
+```bash
+npx -y @mermaid-js/mermaid-cli -i architecture/architecture.mmd -o architecture/architecture.svg -b white
+npx -y @mermaid-js/mermaid-cli -i architecture/architecture.mmd -o architecture/architecture.png -b white -s 4
 ```
 
-## Components and request flow
+## Scope
 
-1. **DNS and edge:** Route 53 hosts the service record. AWS WAFv2 Web ACL is associated with the ALB to apply managed/custom rules and rate limits. ACM provides the public TLS certificate; the ALB terminates HTTPS and forwards only to healthy targets. The ALB is internet-facing in public subnets; the worker nodes remain private.
-2. **Amazon VPC:** Use a dedicated VPC with non-overlapping CIDRs and subnets in three AZs. Place the ALB in public subnets and EKS nodes/pods in private subnets. Route private outbound traffic through a NAT Gateway in each AZ to avoid cross-AZ dependency. Security groups restrict ALB-to-node traffic and node egress. Add VPC endpoints for AWS services (ECR API/Docker, S3, STS, Secrets Manager, CloudWatch Logs) as appropriate to reduce public egress.
-3. **EKS and compute:** EKS supplies the managed regional Kubernetes control plane with a private API endpoint. EC2 managed node groups are distributed over private subnets/AZs. Configure cluster/node IAM roles, encryption for Kubernetes secrets with KMS, control-plane audit/API/authenticator logs, and tested upgrade policies. EKS security groups and Kubernetes NetworkPolicies limit traffic.
-4. **Ingress to Next.js:** AWS Load Balancer Controller runs in the cluster and has a dedicated EKS Pod Identity IAM role to provision/manage the ALB. An ALB-backed Kubernetes Ingress routes to an internal ClusterIP Service and then to a Deployment. Set at least two replicas, topology spread, startup/readiness/liveness probes, resource requests/limits, HPA, PodDisruptionBudget, and rolling-update limits.
-5. **Build and release:** GitHub Actions authenticates to AWS using OIDC and a short-lived, scoped IAM role—no long-lived AWS access key. CI tests, scans, signs and pushes immutable image digests to ECR. EKS node IAM permissions allow pulling only required ECR images, preferably via VPC endpoints. Argo CD reads reviewed deployment configuration and reconciles it; CI has no standing Kubernetes administrator credentials.
-6. **Logs to object storage:** The app writes structured logs to stdout/stderr. Fluent Bit runs as a DaemonSet, buffers and retries, then writes to an S3 bucket/prefix with its own Pod Identity role. Deny public access, require TLS and SSE-KMS, enable versioning, configure lifecycle/retention and alert on delivery errors. The application role does not get S3 write access.
-7. **Secrets and identity:** EKS Pod Identity associates distinct IAM roles with the app, Fluent Bit, and AWS Load Balancer Controller. The app role can read only named Secrets Manager secrets. Use KMS, rotation where supported, and the Secrets Store CSI Driver only if the app requires mounted secret files. Never commit secret values or AWS credentials.
-8. **Observability and operations:** Enable EKS control-plane logs to CloudWatch, Container Insights or equivalent workload metrics, CloudWatch alarms, and SNS notification topics. Monitor ALB 4xx/5xx and latency, pod health/restarts, CPU/memory, node capacity, deployment failures, and S3 delivery. Keep S3 as durable archive and CloudWatch as operational search/alerting.
-9. **Infrastructure state:** Store Terraform state in a separate, encrypted and versioned S3 bucket, restricted to the infrastructure deployment role. Use S3 native lock files where supported by the Terraform version. Protect state because it can contain sensitive resource metadata; never store state in the application repo.
+One AWS production account and region. A VPC across three Availability Zones holds a private EKS cluster that runs `next-bff-service`. GitHub hosts the code and the pipelines. Every box in the diagram is defined in this repository:
+- **AWS resources:** `infra/`
+- **Workload manifests:** `k8s/`
+- **Argo CD ApplicationSets:** `k8s/platform/`
+- **Pipelines:** `.github/workflows/`
 
-## Why these boundaries matter
+## Flows
 
-- Only Route 53/ALB are public entry points. EKS API, nodes, and pods are private; no public node IPs are needed.
-- Separate IAM roles for CI, EKS nodes, the app, Fluent Bit, and the AWS Load Balancer Controller enforce least privilege.
-- Images are pulled from private ECR; secrets are read from Secrets Manager; logs are written to S3 by the collector, not by the app.
-- Multi-AZ subnets, nodes, replicas, and NAT gateways reduce single-AZ dependencies. Regional service capacity and quotas still need to be planned.
-- Keep production in a dedicated AWS account and separate it from development/test accounts. Restrict human access through IAM Identity Center and audit privileged actions.
+### 1. Request path
 
-## Practical notes
+1. **DNS:** the user resolves the service hostname in Route 53. external-dns maintains that alias record and points it at the ALB.
+2. **Edge:** the internet-facing ALB in the public subnets terminates TLS with the ACM certificate. The WAF web ACL attached to it applies a per-IP rate limit and the AWS managed rule groups. HTTP redirects to HTTPS.
+3. **To the pods:** the ALB sends traffic straight to pod IPs in the private subnets (`target-type: ip`). Its health check uses `/api/health`.
+4. **Pod admission:** the NetworkPolicy only admits traffic from inside the VPC on port 3000.
 
-- This design uses an ALB directly protected by AWS WAFv2; CloudFront is optional, not required. Add CloudFront only for CDN caching/global edge needs, then associate WAF appropriately and update origin/network protections.
-- The diagram matches the Terraform in `infra/` and the manifests in `k8s/`. Components marked "planned" (CI workflow, Argo CD) are not yet configured.
-- No database is included because the service requirements do not mention one. Add a managed data service only if the application needs persistent state.
+### 2. Application delivery: CI changes Git, Argo CD changes the cluster
+
+1. Every push to `main` starts **app-ci**, which lints and builds the app.
+2. If the push changed `application/`, the image and deploy jobs run next.
+3. They assume `ci-image-publisher` through GitHub OIDC, builds the image, scans it with Trivy (CRITICAL findings fail the job) and pushes `<ecr>/next-bff-service:<commit sha>`. ECR tags are immutable.
+4. It then runs `kustomize edit set image` in `k8s/` and pushes a `deploy(next-bff-service): <sha>` commit to `main`.
+5. **Argo CD** runs inside the cluster and polls `main` over SSH with a read-only deploy key. It applies `k8s/` with automated sync, prune and self-heal: manual changes in the cluster are reverted, and deleted manifests are removed.
+6. **Health:** the Deployment only becomes ready when the `/api/health` readiness probes pass. After each sync a PostSync Job calls `/api/health` through the Service, and a failure marks the sync as failed.
+7. **Rollback:** `git revert` the deploy commit. Argo CD syncs the previous tag.
+
+CI never holds cluster credentials and never runs `kubectl`.
+
+### 3. Infrastructure delivery
+
+1. **On a pull request** that touches `infra/`, the infra workflow:
+   - runs `terraform fmt`, `validate` and tflint on every stack
+   - plans the core stack and the platform stack with the read-only `ci-terraform-plan` role
+   - posts both plans as PR comments
+2. **After a merge to `main`**, the `apply` job waits in the `production` GitHub environment for a required reviewer. Only jobs in that environment can assume `ci-terraform-apply`. It re-plans and applies core, then platform.
+3. **What it touches:** only the core stack, through AWS APIs. No CI role has an EKS access entry, so the pipeline can't reach the Kubernetes API.
+
+### 4. Cluster contents: bootstrap once, then Git
+
+1. **Bootstrap:** an operator applies `infra/gitops-bootstrap` once, from inside the VPC. It installs Argo CD, the repository and cluster Secrets, the AppProjects and the root application.
+2. **Root application:** syncs the ApplicationSets in `k8s/platform/`. They deploy the AWS Load Balancer Controller, external-dns, metrics-server, Fluent Bit, the service, and Argo CD itself.
+3. **Environment values:** the ApplicationSets read them from annotations on the in-cluster Secret, so the manifests hardcode no hostnames, ARNs or VPC ranges. The only environment value in Git is the image reference CI commits, which is the deploy record.
+4. **Changes:** from here on, any change to anything in the cluster is a commit.
+
+### 5. Logs
+
+The app writes JSON to stdout. The Fluent Bit DaemonSet then:
+1. tails the container logs and adds Kubernetes metadata
+2. buffers on the node's disk
+3. writes gzip objects to the S3 log archive under `eks/<cluster>/YYYY/MM/DD/HH/`, using its own Pod Identity role
+
+The bucket is private, KMS-encrypted and versioned, with lifecycle tiering. The app's own role cannot touch it.
+
+## Trust boundaries
+
+| Boundary | Who crosses it | How |
+|---|---|---|
+| GitHub → AWS (images) | app-ci on `main` | OIDC → `ci-image-publisher`, ECR push to one repository only |
+| GitHub → AWS (infra plan) | infra workflow on same-repo PRs | OIDC `pull_request` → `ci-terraform-plan`, read-only, cannot read S3 objects outside the state bucket |
+| GitHub → AWS (infra apply) | infra workflow after reviewer approval | OIDC `environment:production` → `ci-terraform-apply` |
+| GitHub → Kubernetes API | nobody | Private endpoint; no CI role has an EKS access entry |
+| Operator → Kubernetes API | `eks_admin_role_arns` (humans), for the one-time bootstrap and debugging | VPN or SSM into the VPC, EKS access entry |
+| Git → cluster | Argo CD only (service, add-ons, itself) | Pulls with a read-only deploy key held in Secrets Manager |
+| Pods → AWS | app, Fluent Bit, LB controller, external-dns | One EKS Pod Identity role each; IMDS blocked for pods (hop limit 1) |
+| Internet → service | users | Route 53 → WAF → ALB (TLS) → pods; nodes have no public IPs |
+
+## Availability
+
+- **Zones:** three AZs, each with its own subnets and NAT gateway.
+- **Service:** at least 3 replicas spread across zones and hosts, HPA up to 12, PDB `minAvailable: 2`, and rolling updates with `maxUnavailable: 0`.
+- **Platform:** the controllers run 2 replicas each, all managed by Argo CD. Argo CD runs in HA mode: Redis HA, plus two replicas of the server, repo-server and ApplicationSet controller.
+- **Recovery:** Terraform state is versioned and every deploy is a Git commit, so the cluster can be rebuilt from Git plus state.

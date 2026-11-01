@@ -1,0 +1,30 @@
+# Values for the argo-cd chart. One file, two readers:
+# - infra/gitops-bootstrap installs Argo CD with it, once.
+# - The argo-cd ApplicationSet (../argo-cd.yaml) keeps Argo CD managing
+#   itself from it afterwards, so upgrades are a commit here.
+# Repository credentials are a separate Secret created by the bootstrap; they
+# are never part of these values.
+
+# HA layout: Redis HA across 3 nodes, two replicas of every stateless part.
+redis-ha:
+  enabled: true
+controller:
+  replicas: 1
+server:
+  replicas: 2
+  service:
+    type: ClusterIP
+repoServer:
+  replicas: 2
+applicationSet:
+  replicas: 2
+
+# No SSO configured yet; operators use `kubectl port-forward` to the ClusterIP
+# server. Turn Dex/OIDC on before exposing the UI.
+dex:
+  enabled: false
+
+configs:
+  cm:
+    # Poll Git every 3 minutes; a GitHub webhook to argocd-server can shorten this.
+    timeout.reconciliation: 180s

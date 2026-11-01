@@ -11,7 +11,10 @@ spec:
       app: next-bff-service
   policyTypes: ["Ingress", "Egress"]
   ingress:
-    # ALB (target-type ip) and kubelet probes come from inside the VPC.
+    # ALB (target-type ip), kubelet probes and the Argo CD smoke-test Job all
+    # come from inside the VPC. The Argo CD ApplicationSet replaces this CIDR
+    # with the real VPC's (vpc_cidr annotation); the value here is only the
+    # Terraform default, used by a plain `kustomize build`.
     - from:
         - ipBlock:
             cidr: 10.20.0.0/16

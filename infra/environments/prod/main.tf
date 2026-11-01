@@ -19,11 +19,13 @@ module "eks" {
   private_subnet_ids           = module.network.private_subnet_ids
   endpoint_public_access       = var.eks_endpoint_public_access
   endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
-  admin_role_arns              = var.eks_admin_role_arns
   node_instance_types          = var.node_instance_types
   node_min_size                = var.node_min_size
   node_desired_size            = var.node_desired_size
   node_max_size                = var.node_max_size
+  # Humans only. CI roles get no access entry: the pipelines never call the
+  # Kubernetes API, Argo CD is the only thing that changes the cluster.
+  admin_role_arns = var.eks_admin_role_arns
 }
 
 module "ecr" {
@@ -41,6 +43,27 @@ module "ci_identity" {
   existing_oidc_provider_arn = var.existing_github_oidc_provider_arn
   ecr_repository_arn         = module.ecr.repository_arn
   ecr_kms_key_arn            = module.ecr.kms_key_arn
+}
+
+module "ci_terraform" {
+  source = "../../modules/ci-terraform"
+
+  name              = local.name
+  github_repository = var.github_repository
+  oidc_provider_arn = module.ci_identity.oidc_provider_arn
+  state_bucket_arn  = "arn:aws:s3:::${var.state_bucket_name}"
+  state_kms_key_arn = var.state_kms_key_arn
+}
+
+# Read-only GitHub deploy key Argo CD uses to pull this (private) repository.
+# Terraform creates only the empty secret; an operator stores the private key,
+# and infra/gitops-bootstrap hands it to Argo CD:
+#   aws secretsmanager put-secret-value --secret-id prod/argocd/repo-deploy-key \
+#     --secret-string file://argocd-deploy-key
+resource "aws_secretsmanager_secret" "gitops_repo_key" {
+  name                    = "${var.environment}/argocd/repo-deploy-key"
+  description             = "SSH deploy key (read-only) for Argo CD to pull ${var.github_repository}"
+  recovery_window_in_days = 30
 }
 
 module "log_archive" {

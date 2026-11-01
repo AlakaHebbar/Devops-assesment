@@ -1,0 +1,57 @@
+# Argo CD PostSync hook: after every sync, call the BFF health endpoint through
+# the Service. A non-2xx response fails the sync operation (the automated retry
+# policy then tries again), which flags the release for a revert. Application
+# health itself comes from the resources: the Deployment is Healthy only when
+# its pods pass readiness probes on the same endpoint.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: next-bff-service-smoke-test
+  labels:
+    app: next-bff-service-smoke-test
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    # Keep a failed Job for debugging; it is replaced on the next sync.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: next-bff-service-smoke-test
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: curl
+          image: curlimages/curl:8.23.0
+          args:
+            - --fail
+            - --silent
+            - --show-error
+            - --retry
+            - "10"
+            - --retry-delay
+            - "3"
+            - --retry-all-errors
+            - --max-time
+            - "5"
+            - http://next-bff-service:3000/api/health
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

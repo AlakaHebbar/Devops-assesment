@@ -1,0 +1,28 @@
+# Keeps pinned versions current; every update arrives as a reviewed PR.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /application
+    schedule:
+      interval: weekly
+    groups:
+      next:
+        patterns: ["next", "eslint-config-next", "react", "react-dom", "@types/react*"]
+
+  - package-ecosystem: docker
+    directory: /application
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directories:
+      - /infra/bootstrap
+      - /infra/environments/prod
+      - /infra/gitops-bootstrap
+    schedule:
+      interval: weekly

@@ -284,7 +284,7 @@ resource "aws_eks_addon" "cloudwatch_observability" {
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
 
-  # Metrics only: container log shipping is Fluent Bit -> S3 (see infra/platform).
+  # Metrics only: container log shipping is Fluent Bit -> S3 (see k8s/platform/fluent-bit.yaml).
   configuration_values = jsonencode({
     containerLogs = { enabled = false }
   })

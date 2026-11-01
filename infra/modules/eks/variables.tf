@@ -31,7 +31,7 @@ variable "endpoint_public_access_cidrs" {
 }
 
 variable "admin_role_arns" {
-  description = "IAM role ARNs (e.g. IAM Identity Center admin role, infra deploy role) granted cluster-admin through EKS access entries."
+  description = "IAM role ARNs (e.g. IAM Identity Center admin role) granted cluster-admin through EKS access entries."
   type        = list(string)
   default     = []
 }

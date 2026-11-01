@@ -44,7 +44,7 @@ variable "eks_endpoint_public_access_cidrs" {
 }
 
 variable "eks_admin_role_arns" {
-  description = "IAM roles that get cluster-admin (e.g. the IAM Identity Center admin role and the Terraform deploy role)."
+  description = "IAM roles that get cluster-admin (e.g. the IAM Identity Center admin role). Not CI roles: only Argo CD changes the cluster."
   type        = list(string)
 }
 
@@ -94,6 +94,16 @@ variable "create_github_oidc_provider" {
 variable "existing_github_oidc_provider_arn" {
   type    = string
   default = null
+}
+
+# --- Terraform state (from infra/bootstrap; read by the CI plan role) ---
+
+variable "state_bucket_name" {
+  type = string
+}
+
+variable "state_kms_key_arn" {
+  type = string
 }
 
 # --- Edge / DNS ---

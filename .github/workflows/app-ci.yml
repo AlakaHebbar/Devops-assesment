@@ -1,0 +1,174 @@
+# Build the Next.js service and hand the new image to GitOps.
+#
+# push to main:  lint + build on every push. When application/ changed: image
+#                tagged with the commit SHA -> ECR -> commit the tag to
+#                k8s/kustomization.yaml -> Argo CD deploys it
+# pull request:  lint + build only
+#
+# This workflow has no cluster credentials and never runs kubectl. AWS access is
+# a short-lived OIDC session on a role that can only push to one ECR repository.
+name: app-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - application/**
+      - .github/workflows/app-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Pull requests: a new push cancels the outdated run. Pushes to main: every run
+# goes ahead (unique group). A shared group would let GitHub cancel a queued
+# run, silently dropping that push's app change; ordering of deploy commits is
+# enforced in update-manifests instead.
+concurrency:
+  group: app-ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
+jobs:
+  lint-build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: application/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  # Only ship a new image when the app actually changed; a docs or k8s/ change
+  # (including a revert of a deploy commit) must not roll out a fresh build.
+  changes:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # Manual runs, new branches and force-pushes without a usable base always ship.
+          if [[ "$GITHUB_EVENT_NAME" != "push" || -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$BEFORE" "$GITHUB_SHA" -- application/ .github/workflows/app-ci.yml; then
+            echo "app=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    needs: [lint-build, changes]
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # OIDC -> AWS
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_IMAGE_PUBLISHER_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - id: meta
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          echo "image=${REGISTRY}/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          # ECR tags are immutable: on a re-run the image may already exist.
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+               --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.meta.outputs.exists == 'false'
+
+      # Load locally first so the scan gates the push.
+      - name: Build
+        if: steps.meta.outputs.exists == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: application
+          build-args: |
+            VERSION=${{ github.sha }}
+            GIT_SHA=${{ github.sha }}
+          tags: ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan
+        if: steps.meta.outputs.exists == 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Push
+        if: steps.meta.outputs.exists == 'false'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: docker push "${IMAGE}:${GITHUB_SHA}"
+
+  # The deploy step: change Git, not the cluster. Argo CD picks up the commit.
+  update-manifests:
+    needs: image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # push the tag commit to main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0 # ancestry check below
+
+      # Runs for different pushes can finish in any order. `git push` is the
+      # lock: it only succeeds if main hasn't moved since we read it, and every
+      # attempt re-checks that we never replace a newer deployed commit.
+      # Commits made with GITHUB_TOKEN do not trigger workflows, and the change
+      # is outside application/, so this cannot loop.
+      - name: Commit the new tag to main
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}
+        run: .github/scripts/update-image-tag.sh "$IMAGE" "$GITHUB_SHA"
