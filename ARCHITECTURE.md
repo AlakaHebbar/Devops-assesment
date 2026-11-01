@@ -135,10 +135,13 @@ Runs on every push to `main`. Pull requests run only the first job.
    - Trivy scans the local image. CRITICAL, fixable findings fail the job before anything is pushed.
    - The image is pushed as `<ecr>/next-bff-service:<commit sha>`.
    - A re-run skips the build if that tag already exists, because tags are immutable.
-4. **update-manifests**: runs `kustomize edit set image next-bff-service=<ecr>:<sha>` in `k8s/` and pushes a `deploy(next-bff-service): <sha>` commit to `main` using the workflow's `GITHUB_TOKEN`.
+4. **update-manifests** ([`update-image-tag.sh`](.github/scripts/update-image-tag.sh)): runs `kustomize edit set image next-bff-service=<ecr>:<sha>` in `k8s/` and pushes a `deploy(next-bff-service): <sha>` commit to `main` using the workflow's `GITHUB_TOKEN`.
    - That commit is the deploy trigger.
    - It can't loop: GitHub doesn't start workflows for `GITHUB_TOKEN` commits, and the change is outside `application/`.
-   - `concurrency` keeps releases in order.
+   - **Safe ordering without queues:**
+     - Every push to `main` gets its own run, so no push's app change can be dropped by GitHub cancelling a queued run.
+     - `git push` itself is the lock: it is rejected if `main` moved, and the script then re-reads `main` and retries.
+     - Before each attempt it checks that the deployed SHA is an ancestor of its own (`git merge-base --is-ancestor`), so a slow, older build never replaces a newer deploy.
 
 All third-party actions are pinned to commit SHAs, and Dependabot keeps them current. Every job starts from `contents: read` and asks only for what it needs.
 

@@ -21,9 +21,12 @@ on:
 permissions:
   contents: read
 
+# Pull requests: a new push cancels the outdated run. Pushes to main: every run
+# goes ahead (unique group). A shared group would let GitHub cancel a queued
+# run, silently dropping that push's app change; ordering of deploy commits is
+# enforced in update-manifests instead.
 concurrency:
-  # One release at a time on main so tag commits land in order.
-  group: app-ci-${{ github.ref }}
+  group: app-ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -158,28 +161,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+          fetch-depth: 0 # ancestry check below
 
-      - name: Set image tag
-        env:
-          IMAGE: ${{ needs.image.outputs.image }}
-        working-directory: k8s
-        run: kustomize edit set image "next-bff-service=${IMAGE}:${GITHUB_SHA}"
-
+      # Runs for different pushes can finish in any order. `git push` is the
+      # lock: it only succeeds if main hasn't moved since we read it, and every
+      # attempt re-checks that we never replace a newer deployed commit.
       # Commits made with GITHUB_TOKEN do not trigger workflows, and the change
       # is outside application/, so this cannot loop.
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add k8s/kustomization.yaml
-          if git diff --cached --quiet; then
-            echo "Image tag already ${GITHUB_SHA}; nothing to deploy."
-            exit 0
-          fi
-          git commit -m "deploy(next-bff-service): ${GITHUB_SHA::12}" \
-                     -m "Image built from ${GITHUB_SHA} by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          for attempt in 1 2 3; do
-            git push origin HEAD:main && exit 0
-            git pull --rebase origin main
-          done
-          exit 1
+      - name: Commit the new tag to main
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}
+        run: .github/scripts/update-image-tag.sh "$IMAGE" "$GITHUB_SHA"
