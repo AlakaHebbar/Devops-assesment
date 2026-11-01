@@ -3,6 +3,10 @@ services:
     build:
       context: ./application
       dockerfile: Dockerfile
+      # Bake the same version into the image that the tag below uses.
+      args:
+        VERSION: ${IMAGE_TAG:-0.1.0}
+        GIT_SHA: ${GIT_SHA:-unknown}
     image: ${IMAGE_REGISTRY:-local}/${IMAGE_NAME:-next-bff-service}:${IMAGE_TAG:-0.1.0}
     ports:
       - "${APP_PORT:-3000}:3000"
