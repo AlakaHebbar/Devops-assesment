@@ -6,12 +6,14 @@ Terraform for the production AWS environment. See [../ARCHITECTURE.md](../ARCHIT
 infra/
 ├── bootstrap/              # state bucket + KMS (local state, apply once)
 ├── environments/prod/      # core: VPC, EKS, ECR, IAM, Route 53/ACM/WAF, log bucket, alarms
-├── platform/               # Helm: LB controller, external-dns, metrics-server, Fluent Bit
+├── platform/               # Helm: LB controller, external-dns, metrics-server, Fluent Bit, Argo CD
 └── modules/
     ├── network/            # VPC, subnets, NAT per AZ, flow logs, VPC endpoints
     ├── eks/                # cluster, KMS, node group, add-ons, access entries
     ├── ecr/                # immutable private registry
     ├── ci-identity/        # GitHub OIDC + image publisher role
+    ├── ci-terraform/       # Terraform plan (PR) and apply (production env) roles
+    ├── ci-runner/          # CodeBuild-hosted GitHub Actions runner in the VPC
     ├── workload-identity/  # Pod Identity roles (app, fluent-bit, LBC, external-dns)
     ├── log-archive/        # S3 log bucket
     ├── edge/               # Route 53, ACM, WAFv2
@@ -51,19 +53,54 @@ terraform init -backend-config=../environments/prod/backend.hcl
 terraform apply -var state_bucket=<state bucket>
 ```
 
-## 4. Push the image and deploy the service
+## 4. GitOps and CI setup (once)
 
-```bash
-REPO=$(terraform -chdir=infra/environments/prod output -raw ecr_repository_url)
-TAG=$(git rev-parse --short HEAD)
-aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
-docker build --build-arg VERSION="$TAG" --build-arg GIT_SHA="$TAG" -t "$REPO:$TAG" application
-docker push "$REPO:$TAG"
-```
+1. **Deploy key for Argo CD.** The repository is private, so Argo CD needs a read-only key.
+   1. Generate a key pair:
 
-Set the image tag in `k8s/kustomization.yaml`, and the hostname, `certificate_arn` and `web_acl_arn` outputs in `k8s/ingress.yaml`. Then:
+      ```bash
+      ssh-keygen -t ed25519 -N "" -C argocd -f argocd-deploy-key
+      ```
 
-```bash
-aws eks update-kubeconfig --name next-bff-prod
-kubectl apply -k k8s/
-```
+   2. Add `argocd-deploy-key.pub` in GitHub under Settings → Deploy keys, with write access off.
+   3. Store the private key in Secrets Manager, then delete the local files:
+
+      ```bash
+      aws secretsmanager put-secret-value --secret-id prod/argocd/repo-deploy-key \
+        --secret-string file://argocd-deploy-key
+      ```
+
+2. **CodeConnections.** Create a GitHub connection in the AWS console (Developer Tools → Connections) and approve it in GitHub. Put its ARN in `github_codeconnections_arn` before the core apply.
+3. **GitHub environment.** Create an environment named `production` with required reviewers. Its deployment branches should be limited to `main`.
+4. **GitHub variables and secrets.** Set the variables and secrets listed in [ARCHITECTURE.md](../ARCHITECTURE.md#secrets-and-ci-configuration). Most values come from:
+
+   ```bash
+   terraform -chdir=infra/environments/prod output
+   ```
+
+5. **Install Argo CD.** Apply the platform stack (step 3, or merge a PR and approve the pipeline). This installs Argo CD and the `next-bff-service` Application. From then on, everything in `k8s/` is deployed by Argo CD.
+
+From here on, both stacks are applied by `.github/workflows/infra.yml`. Run applies locally only to break glass.
+
+## 5. Deploy and roll back the service
+
+- **Deploy:** merge to `main`. `app-ci` builds, scans and pushes `<ecr>/next-bff-service:<sha>`, then commits that tag to `k8s/kustomization.yaml`. Argo CD syncs it.
+- **Roll back:** revert the deploy commit:
+
+  ```bash
+  git revert <deploy-commit> && git push
+  ```
+
+- **Check status** from a host that can reach the API:
+
+  ```bash
+  kubectl -n argocd get applications
+  ```
+
+- **Argo CD UI:**
+
+  ```bash
+  kubectl -n argocd port-forward svc/argo-cd-argocd-server 8080:443
+  ```
+
+  The initial admin password is in the `argocd-initial-admin-secret` Secret.

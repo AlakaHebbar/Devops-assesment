@@ -1,6 +1,9 @@
 # devops-challenge
 
-Stateless Next.js service (`next-bff-service`) running on Amazon EKS. `infra/` holds the Terraform (VPC, EKS, ECR, IAM, Route 53/ACM/WAF, S3 log archive); `k8s/` holds the service manifests. `.github/workflows/` (CI) and GitOps come in a later part.
+A stateless Next.js service (`next-bff-service`) running on Amazon EKS and delivered with GitOps.
+- `infra/` holds the Terraform: VPC, EKS, ECR, IAM, Route 53/ACM/WAF, S3 log archive, CI identities, and Argo CD.
+- `k8s/` holds the service manifests, which Argo CD deploys.
+- `.github/workflows/` holds the CI pipelines.
 
 ## Layout
 
@@ -9,10 +12,10 @@ devops-challenge/
 ├── infra/                 # Terraform: bootstrap, environments/prod, platform, modules
 ├── application/           # Next.js app + Dockerfile
 ├── k8s/                   # Kubernetes manifests (kustomize)
-├── .github/workflows/     # CI (later)
+├── .github/workflows/     # CI: app-ci, infra, security
 ├── docker-compose.yml
 ├── .env.example
-├── architecture/          # diagram source
+├── architecture/          # design document: Mermaid source + exported SVG/PNG
 ├── README.md
 └── ARCHITECTURE.md
 ```
@@ -50,3 +53,26 @@ aws ecr get-login-password --region <region> \
 docker compose build
 docker push "${IMAGE_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
 ```
+
+## CI/CD (Part 3)
+
+```
+push to main ─▶ app-ci: lint · build · Trivy · push ECR :<sha> ─▶ commit k8s/kustomization.yaml newTag=<sha>
+                                                                          │
+                                       Argo CD (in cluster) polls main ◀──┘ ─▶ sync k8s/ (prune, self-heal) ─▶ PostSync GET /api/health
+```
+
+- **Deploy:** merge to `main`. The pipeline commits the image tag, and Argo CD applies it within about 3 minutes.
+- **Roll back:**
+
+  ```bash
+  git revert <deploy-commit> && git push
+  ```
+
+  Argo CD syncs the previous image.
+- **Infrastructure:**
+  - Open a PR that touches `infra/`, and the plans are posted as comments.
+  - After the merge, approve the `production` environment deployment to apply.
+- **Secrets:** none are committed. CI configuration lives in GitHub Actions variables and secrets (listed in [ARCHITECTURE.md](ARCHITECTURE.md#secrets-and-ci-configuration)). The Argo CD deploy key and app secrets live in AWS Secrets Manager.
+
+The manual ECR push above is only needed before CI is set up.

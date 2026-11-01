@@ -19,11 +19,15 @@ module "eks" {
   private_subnet_ids           = module.network.private_subnet_ids
   endpoint_public_access       = var.eks_endpoint_public_access
   endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
-  admin_role_arns              = var.eks_admin_role_arns
   node_instance_types          = var.node_instance_types
   node_min_size                = var.node_min_size
   node_desired_size            = var.node_desired_size
   node_max_size                = var.node_max_size
+
+  # The Terraform apply role installs the platform Helm releases (Argo CD among
+  # them); the plan role only reads.
+  admin_role_arns = concat(var.eks_admin_role_arns, [module.ci_terraform.apply_role_arn])
+  view_role_arns  = [module.ci_terraform.plan_role_arn]
 }
 
 module "ecr" {
@@ -41,6 +45,38 @@ module "ci_identity" {
   existing_oidc_provider_arn = var.existing_github_oidc_provider_arn
   ecr_repository_arn         = module.ecr.repository_arn
   ecr_kms_key_arn            = module.ecr.kms_key_arn
+}
+
+module "ci_terraform" {
+  source = "../../modules/ci-terraform"
+
+  name                   = local.name
+  github_repository      = var.github_repository
+  oidc_provider_arn      = module.ci_identity.oidc_provider_arn
+  state_bucket_arn       = "arn:aws:s3:::${var.state_bucket_name}"
+  state_kms_key_arn      = var.state_kms_key_arn
+  gitops_repo_secret_arn = aws_secretsmanager_secret.gitops_repo_key.arn
+}
+
+module "ci_runner" {
+  source = "../../modules/ci-runner"
+
+  name                      = local.name
+  github_repository         = var.github_repository
+  codeconnections_arn       = var.github_codeconnections_arn
+  vpc_id                    = module.network.vpc_id
+  subnet_ids                = module.network.private_subnet_ids
+  cluster_security_group_id = module.eks.cluster_security_group_id
+}
+
+# Read-only GitHub deploy key Argo CD uses to pull this (private) repository.
+# Terraform creates only the empty secret; an operator stores the private key:
+#   aws secretsmanager put-secret-value --secret-id prod/argocd/repo-deploy-key \
+#     --secret-string file://argocd-deploy-key
+resource "aws_secretsmanager_secret" "gitops_repo_key" {
+  name                    = "${var.environment}/argocd/repo-deploy-key"
+  description             = "SSH deploy key (read-only) for Argo CD to pull ${var.github_repository}"
+  recovery_window_in_days = 30
 }
 
 module "log_archive" {

@@ -1,60 +1,103 @@
 flowchart LR
-    users["Users / browsers"] --> r53["Amazon Route 53"]
-    r53 --> waf["AWS WAFv2<br/>Web ACL"]
-    waf --> alb["Application Load Balancer<br/>ACM TLS certificate"]
+    users(["Users / browsers"])
+    dev(["Engineers<br/>pull requests"])
 
-    repo["Git repository<br/>application + k8s manifests"] --> ci["GitHub Actions CI (planned)<br/>build · push"]
-    ci -->|"OIDC assume-role; push image"| ecr["Amazon ECR<br/>immutable image tags"]
+    subgraph github["GitHub"]
+        repo["Git repository · main<br/>application/ · k8s/ · infra/"]
+        appci["app-ci workflow<br/>lint · build · scan · push<br/>commit image tag to k8s/"]
+        infraci["infra workflow<br/>PR: fmt · validate · tflint · plan<br/>main: apply after approval"]
+        env["production environment<br/>required reviewers"]
+        store["Actions secrets / variables<br/>tfvars · role ARNs"]
+    end
+
+    dev --> repo
+    repo --> appci
+    repo --> infraci
+    appci -->|"bot commit: newTag = commit SHA"| repo
+    infraci --- env
+    store -.-> infraci
 
     subgraph aws["AWS production account / region"]
-        subgraph vpc["Amazon VPC · 3 Availability Zones"]
-            subgraph public["Public subnets · each AZ"]
-                alb
-                nat["NAT Gateway per AZ"]
+        r53["Route 53<br/>public hosted zone"]
+        waf["WAFv2 web ACL<br/>rate limit · managed rules"]
+        acm["ACM certificate"]
+
+        subgraph identity["IAM · GitHub OIDC (short-lived, no stored keys)"]
+            pub["ci-image-publisher<br/>push to one ECR repo"]
+            plan["ci-terraform-plan<br/>read-only · pull_request"]
+            apply["ci-terraform-apply<br/>environment: production"]
+        end
+
+        ecr["ECR<br/>immutable tags · scan on push · KMS"]
+        state["S3 Terraform state<br/>versioned · KMS · lock file"]
+        secrets["Secrets Manager<br/>app secrets · Argo CD deploy key"]
+        s3["S3 log archive<br/>Block Public Access · SSE-KMS<br/>versioning · lifecycle"]
+        cw["CloudWatch<br/>control-plane logs · Container Insights · alarms"]
+        sns["SNS alerts"]
+
+        subgraph vpc["VPC 10.20.0.0/16 · 3 Availability Zones"]
+            subgraph public["Public subnets"]
+                alb["Application Load Balancer<br/>HTTPS · TLS 1.3/1.2"]
+                nat["NAT gateway per AZ"]
             end
-            subgraph private["Private EKS subnets · each AZ"]
-                subgraph eks["Amazon EKS regional cluster"]
-                    api["AWS-managed EKS control plane<br/>private API endpoint · audit logs"]
-                    subgraph nodes["EC2 managed node groups"]
-                        ing["AWS Load Balancer Controller"]
-                        svc["Kubernetes internal Service"]
-                        app["Next.js Deployment<br/>replicas · probes · HPA"]
-                        fluent["Fluent Bit DaemonSet<br/>buffer + retry"]
-                        extdns["external-dns<br/>Route 53 alias records"]
-                        metrics["metrics-server<br/>feeds HPA"]
-                        argocd["Argo CD (planned)<br/>GitOps reconciler"]
-                        ing --> svc --> app
-                        app -. "stdout / stderr" .-> fluent
-                        argocd -. "reconciles manifests" .-> app
-                        metrics -. "CPU metrics" .-> app
+
+            subgraph private["Private subnets"]
+                runner["CodeBuild GitHub Actions runner<br/>ephemeral · in-VPC"]
+                endpoints["VPC endpoints<br/>ECR · S3 · STS · EKS Auth · Logs · Secrets Manager"]
+
+                subgraph eks["EKS · private API endpoint · KMS-encrypted secrets"]
+                    api["Kubernetes API"]
+                    subgraph platform["Platform add-ons (infra/platform, Helm)"]
+                        argocd["Argo CD<br/>auto-sync · prune · self-heal"]
+                        lbc["AWS Load Balancer Controller"]
+                        extdns["external-dns"]
+                        ms["metrics-server"]
+                        fb["Fluent Bit DaemonSet<br/>disk buffer · retry"]
+                    end
+                    subgraph ns["namespace next-bff · restricted PSS"]
+                        ing["Ingress"]
+                        svc["Service"]
+                        app["next-bff-service Deployment<br/>probes on /api/health<br/>HPA 3–12 · PDB · NetworkPolicy"]
+                        smoke["PostSync smoke test<br/>GET /api/health"]
                     end
                 end
             end
-            endpoints["VPC endpoints<br/>ECR · S3 · STS · EKS Auth · Secrets Manager · Logs"]
         end
-
-        secrets["AWS Secrets Manager<br/>KMS encryption"]
-        s3["Amazon S3 log archive<br/>Block Public Access · SSE-KMS<br/>versioning · lifecycle/retention"]
-        cw["Amazon CloudWatch<br/>EKS control-plane logs · metrics · alarms"]
-        sns["Amazon SNS<br/>alert notifications"]
-        state["Terraform state S3 bucket<br/>versioning · SSE-KMS · lock file"]
-        iam["AWS IAM + EKS Pod Identity<br/>separate least-privilege roles"]
-
-        alb --> ing
-        app -. "private AWS API access" .-> endpoints
-        app -. "Pod Identity: read app secrets" .-> secrets
-        fluent -->|"Pod Identity: write log prefix"| s3
-        api -->|"control-plane audit/API/authenticator logs"| cw
-        app -. "metrics / container insights" .-> cw
-        cw --> sns
-        app -. "egress only when required" .-> nat
-        ecr -. "node IAM role: pull image via endpoint" .-> app
-        iam -. "Pod Identity associations / policies" .-> app
-        iam -. "Pod Identity associations / policies" .-> fluent
-        iam -. "Pod Identity associations / policies" .-> ing
-        iam -. "Pod Identity associations / policies" .-> extdns
-        extdns -->|"upsert alias record"| r53
     end
 
-    repo -. "reviewed desired state" .-> argocd
-    ci -. "Terraform plan/apply role; approval gated" .-> state
+    %% Request path
+    users --> r53 --> alb
+    waf --- alb
+    acm --- alb
+    alb --> svc --> app
+
+    %% Delivery: CI changes Git, Argo CD changes the cluster
+    appci -->|"OIDC"| pub -->|"docker push :sha"| ecr
+    argocd -->|"SSH deploy key · poll main"| repo
+    argocd -->|"apply k8s/"| ing
+    argocd --> app
+    argocd --> smoke
+    smoke -.-> svc
+    ecr -->|"node role pulls via endpoint"| app
+
+    %% Infrastructure pipeline
+    infraci -->|"PR plan"| plan
+    infraci -->|"apply after approval"| apply
+    plan -.-> state
+    apply --> state
+    infraci -->|"platform jobs"| runner
+    runner -->|"443"| api
+
+    %% Controllers
+    lbc -->|"provisions"| alb
+    lbc -.-> ing
+    extdns -->|"alias record"| r53
+    ms -.->|"CPU metrics"| app
+
+    %% Logs and monitoring
+    app -.->|"stdout JSON"| fb
+    fb -->|"Pod Identity · PutObject eks/*"| s3
+    app -.->|"Pod Identity · read prod/next-bff-service/*"| secrets
+    api --> cw --> sns
+    private -.->|"egress"| nat
+    eks -.-> endpoints

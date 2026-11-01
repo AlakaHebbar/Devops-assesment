@@ -195,3 +195,144 @@ resource "helm_release" "fluent_bit" {
     }
   })]
 }
+
+# --- GitOps: Argo CD ---------------------------------------------------------
+# Argo CD is the only thing that deploys the service. CI never talks to the
+# cluster: it commits the new image tag to k8s/ and Argo CD syncs it.
+
+# Read-only deploy key, stored in Secrets Manager by an operator (see the core
+# stack). It lands in this stack's encrypted state and in the Argo CD repo
+# Secret in-cluster (KMS envelope-encrypted), never in Git.
+data "aws_secretsmanager_secret_version" "gitops_repo_key" {
+  secret_id = local.core.gitops_repo_secret_arn
+}
+
+resource "helm_release" "argocd" {
+  name             = "argo-cd"
+  namespace        = "argocd"
+  create_namespace = true
+  repository       = "https://argoproj.github.io/argo-helm"
+  chart            = "argo-cd"
+  version          = "10.11.6"
+
+  values = [yamlencode({
+    # HA layout: Redis HA across 3 nodes, two replicas of every stateless part.
+    "redis-ha"     = { enabled = true }
+    controller     = { replicas = 1 }
+    server         = { replicas = 2, service = { type = "ClusterIP" } }
+    repoServer     = { replicas = 2 }
+    applicationSet = { replicas = 2 }
+    # No SSO configured yet; operators use `kubectl port-forward` to the
+    # ClusterIP server. Turn Dex/OIDC on before exposing the UI.
+    dex = { enabled = false }
+
+    configs = {
+      cm = {
+        # Poll Git every 3 minutes; a GitHub webhook to argocd-server can shorten this.
+        "timeout.reconciliation" = "180s"
+      }
+      repositories = {
+        "gitops-repo" = {
+          name = "gitops-repo"
+          type = "git"
+          url  = var.gitops_repo_url
+        }
+      }
+    }
+  })]
+
+  set_sensitive = [{
+    name  = "configs.repositories.gitops-repo.sshPrivateKey"
+    value = data.aws_secretsmanager_secret_version.gitops_repo_key.secret_string
+    # Pass the multi-line PEM as-is, without Helm's --set parsing.
+    type = "literal"
+  }]
+
+  depends_on = [helm_release.aws_load_balancer_controller]
+}
+
+# Project + Application for the service. The Application watches k8s/ on main
+# and auto-syncs with prune and self-heal, so manual changes are reverted.
+resource "helm_release" "argocd_apps" {
+  name       = "argocd-apps"
+  namespace  = "argocd"
+  repository = "https://argoproj.github.io/argo-helm"
+  chart      = "argocd-apps"
+  version    = "2.0.7"
+
+  values = [yamlencode({
+    projects = {
+      "next-bff" = {
+        namespace   = "argocd"
+        description = "next-bff-service"
+        sourceRepos = [var.gitops_repo_url]
+        destinations = [{
+          server    = "https://kubernetes.default.svc"
+          namespace = var.service_namespace
+        }]
+        # The only cluster-scoped object the service owns.
+        clusterResourceWhitelist = [{ group = "", kind = "Namespace" }]
+      }
+    }
+
+    applications = {
+      "next-bff-service" = {
+        namespace = "argocd"
+        project   = "next-bff"
+        # No resources finalizer on purpose: deleting the Application must not
+        # take production down with it.
+        source = {
+          repoURL        = var.gitops_repo_url
+          targetRevision = var.gitops_revision
+          path           = var.gitops_path
+          kustomize = {
+            # Environment values come from the core stack, so k8s/ stays free
+            # of account IDs and ARNs.
+            patches = [{
+              target = { kind = "Ingress", name = "next-bff-service" }
+              patch = yamlencode([
+                { op = "add", path = "/spec/rules/0/host", value = local.core.domain_name },
+                { op = "add", path = "/metadata/annotations/alb.ingress.kubernetes.io~1certificate-arn", value = local.core.certificate_arn },
+                { op = "add", path = "/metadata/annotations/alb.ingress.kubernetes.io~1wafv2-acl-arn", value = local.core.web_acl_arn },
+                { op = "add", path = "/metadata/annotations/external-dns.alpha.kubernetes.io~1hostname", value = local.core.domain_name },
+              ])
+            }]
+          }
+        }
+        destination = {
+          server    = "https://kubernetes.default.svc"
+          namespace = var.service_namespace
+        }
+        syncPolicy = {
+          automated = {
+            prune    = true
+            selfHeal = true
+          }
+          syncOptions = [
+            "CreateNamespace=false", # k8s/namespace.yaml carries the Pod Security labels
+            "PrunePropagationPolicy=foreground",
+            "RespectIgnoreDifferences=true",
+          ]
+          retry = {
+            limit   = 5
+            backoff = { duration = "10s", factor = 2, maxDuration = "3m" }
+          }
+        }
+        # The HPA owns the replica count.
+        ignoreDifferences = [{
+          group        = "apps"
+          kind         = "Deployment"
+          name         = "next-bff-service"
+          jsonPointers = ["/spec/replicas"]
+        }]
+      }
+    }
+  })]
+
+  depends_on = [
+    helm_release.argocd,
+    helm_release.aws_load_balancer_controller,
+    helm_release.external_dns,
+    helm_release.metrics_server,
+  ]
+}

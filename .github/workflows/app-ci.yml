@@ -1,0 +1,160 @@
+# Build the Next.js service and hand the new image to GitOps.
+#
+# push to main:  lint + build -> image tagged with the commit SHA -> ECR
+#                -> commit the tag to k8s/kustomization.yaml -> Argo CD deploys it
+# pull request:  lint + build only
+#
+# This workflow has no cluster credentials and never runs kubectl. AWS access is
+# a short-lived OIDC session on a role that can only push to one ECR repository.
+name: app-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - application/**
+      - .github/workflows/app-ci.yml
+  pull_request:
+    paths:
+      - application/**
+      - .github/workflows/app-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One release at a time on main so tag commits land in order.
+  group: app-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
+jobs:
+  lint-build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: application/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  image:
+    needs: lint-build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # OIDC -> AWS
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_IMAGE_PUBLISHER_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+
+      - id: meta
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          echo "image=${REGISTRY}/${ECR_REPOSITORY}" >> "$GITHUB_OUTPUT"
+          # ECR tags are immutable: on a re-run the image may already exist.
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+               --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.meta.outputs.exists == 'false'
+
+      # Load locally first so the scan gates the push.
+      - name: Build
+        if: steps.meta.outputs.exists == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: application
+          build-args: |
+            VERSION=${{ github.sha }}
+            GIT_SHA=${{ github.sha }}
+          tags: ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan
+        if: steps.meta.outputs.exists == 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Push
+        if: steps.meta.outputs.exists == 'false'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: docker push "${IMAGE}:${GITHUB_SHA}"
+
+  # The deploy step: change Git, not the cluster. Argo CD picks up the commit.
+  update-manifests:
+    needs: image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # push the tag commit to main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Set image tag
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}
+        working-directory: k8s
+        run: kustomize edit set image "next-bff-service=${IMAGE}:${GITHUB_SHA}"
+
+      # Commits made with GITHUB_TOKEN do not trigger workflows, and the change
+      # is outside application/, so this cannot loop.
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/kustomization.yaml
+          if git diff --cached --quiet; then
+            echo "Image tag already ${GITHUB_SHA}; nothing to deploy."
+            exit 0
+          fi
+          git commit -m "deploy(next-bff-service): ${GITHUB_SHA::12}" \
+                     -m "Image built from ${GITHUB_SHA} by ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          for attempt in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            git pull --rebase origin main
+          done
+          exit 1

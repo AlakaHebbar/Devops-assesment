@@ -1,0 +1,240 @@
+# Terraform pipeline for infra/.
+#
+# pull request:  fmt + validate + tflint on every stack, then a plan of the core
+#                and platform stacks posted to the PR (read-only role, no lock).
+# push to main:  re-plan and apply core then platform, in the `production`
+#                GitHub environment, which waits for a required reviewer.
+#
+# The EKS API is private, so jobs that touch the cluster (platform plan/apply)
+# run on the CodeBuild runner inside the VPC (infra/modules/ci-runner).
+# Configuration comes from the CI secret store, never from the repository:
+#   vars:    AWS_REGION, TF_STATE_BUCKET, TF_STATE_KMS_KEY_ARN, CI_RUNNER_PROJECT,
+#            AWS_TERRAFORM_PLAN_ROLE_ARN, AWS_TERRAFORM_APPLY_ROLE_ARN
+#   secrets: PROD_TFVARS (contents of infra/environments/prod/terraform.tfvars)
+name: infra
+
+on:
+  pull_request:
+    paths:
+      - infra/**
+      - .github/workflows/infra.yml
+  push:
+    branches: [main]
+    paths:
+      - infra/**
+      - .github/workflows/infra.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: 1.17.1
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Format
+        run: terraform fmt -check -recursive -diff infra
+
+      - name: Validate
+        run: |
+          for stack in infra/bootstrap infra/environments/prod infra/platform; do
+            echo "::group::$stack"
+            terraform -chdir="$stack" init -backend=false -lockfile=readonly
+            terraform -chdir="$stack" validate
+            echo "::endgroup::"
+          done
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.65.0
+
+      - name: Lint
+        env:
+          GITHUB_TOKEN: ${{ github.token }} # tflint plugin download rate limit
+        run: |
+          tflint --init --config "$PWD/infra/.tflint.hcl"
+          tflint --recursive --chdir infra --config "$PWD/infra/.tflint.hcl"
+
+  plan-core:
+    needs: checks
+    # Forks get no OIDC token and must not reach the plan role.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: infra/environments/prod
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configuration from the secret store
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+          PROD_TFVARS: ${{ secrets.PROD_TFVARS }}
+        run: |
+          printf 'bucket = "%s"\nregion = "%s"\nkms_key_id = "%s"\n' \
+            "$TF_STATE_BUCKET" "$AWS_REGION" "$TF_STATE_KMS_KEY_ARN" > backend.hcl
+          printf '%s\n' "$PROD_TFVARS" > terraform.tfvars
+
+      - run: terraform init -backend-config=backend.hcl -lockfile=readonly
+
+      # The plan role is read-only and cannot write the state lock file.
+      - id: plan
+        run: |
+          terraform plan -lock=false -no-color -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+
+      - name: Comment plan
+        if: always() && steps.plan.outcome != 'skipped'
+        run: ../../../.github/scripts/plan-comment.sh core plan.txt "${{ steps.plan.outcome }}" > comment.md
+
+      - uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        if: always() && steps.plan.outcome != 'skipped'
+        with:
+          header: terraform-plan-core
+          path: infra/environments/prod/comment.md
+
+  plan-platform:
+    needs: checks
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    # In-VPC runner: the platform stack talks to the private EKS API.
+    runs-on: codebuild-${{ vars.CI_RUNNER_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: infra/platform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configuration from the secret store
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+          REPO: ${{ github.repository }}
+        run: |
+          printf 'bucket = "%s"\nregion = "%s"\nkms_key_id = "%s"\n' \
+            "$TF_STATE_BUCKET" "$AWS_REGION" "$TF_STATE_KMS_KEY_ARN" > backend.hcl
+          printf 'region = "%s"\nstate_bucket = "%s"\ngitops_repo_url = "git@github.com:%s.git"\n' \
+            "$AWS_REGION" "$TF_STATE_BUCKET" "$REPO" > terraform.tfvars
+
+      - run: terraform init -backend-config=backend.hcl -lockfile=readonly
+
+      - id: plan
+        run: |
+          terraform plan -lock=false -no-color -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+
+      - name: Comment plan
+        if: always() && steps.plan.outcome != 'skipped'
+        run: ../../.github/scripts/plan-comment.sh platform plan.txt "${{ steps.plan.outcome }}" > comment.md
+
+      - uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        if: always() && steps.plan.outcome != 'skipped'
+        with:
+          header: terraform-plan-platform
+          path: infra/platform/comment.md
+
+  apply:
+    needs: checks
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    # Required reviewers on this environment are the manual approval gate; the
+    # apply role trusts only tokens issued to jobs in this environment.
+    environment: production
+    runs-on: codebuild-${{ vars.CI_RUNNER_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}
+    concurrency:
+      group: infra-prod-apply
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Configuration from the secret store
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
+          PROD_TFVARS: ${{ secrets.PROD_TFVARS }}
+          REPO: ${{ github.repository }}
+        run: |
+          backend=$(printf 'bucket = "%s"\nregion = "%s"\nkms_key_id = "%s"\n' \
+            "$TF_STATE_BUCKET" "$AWS_REGION" "$TF_STATE_KMS_KEY_ARN")
+          printf '%s\n' "$backend" > infra/environments/prod/backend.hcl
+          printf '%s\n' "$backend" > infra/platform/backend.hcl
+          printf '%s\n' "$PROD_TFVARS" > infra/environments/prod/terraform.tfvars
+          printf 'region = "%s"\nstate_bucket = "%s"\ngitops_repo_url = "git@github.com:%s.git"\n' \
+            "$AWS_REGION" "$TF_STATE_BUCKET" "$REPO" > infra/platform/terraform.tfvars
+
+      # Core first: platform reads its outputs through remote state.
+      - name: Apply core
+        working-directory: infra/environments/prod
+        run: |
+          terraform init -backend-config=backend.hcl -lockfile=readonly
+          terraform plan -out=tfplan
+          terraform apply tfplan
+
+      - name: Apply platform
+        working-directory: infra/platform
+        run: |
+          terraform init -backend-config=backend.hcl -lockfile=readonly
+          terraform plan -out=tfplan
+          terraform apply tfplan

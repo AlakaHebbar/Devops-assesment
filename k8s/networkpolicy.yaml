@@ -11,7 +11,8 @@ spec:
       app: next-bff-service
   policyTypes: ["Ingress", "Egress"]
   ingress:
-    # ALB (target-type ip) and kubelet probes come from inside the VPC.
+    # ALB (target-type ip), kubelet probes and the Argo CD smoke-test Job all
+    # come from inside the VPC.
     - from:
         - ipBlock:
             cidr: 10.20.0.0/16

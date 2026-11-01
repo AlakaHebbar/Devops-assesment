@@ -65,3 +65,9 @@ variable "node_disk_size_gib" {
   type    = number
   default = 50
 }
+
+variable "view_role_arns" {
+  description = "IAM role ARNs granted cluster-wide read access (AmazonEKSAdminViewPolicy), e.g. the Terraform plan role."
+  type        = list(string)
+  default     = []
+}

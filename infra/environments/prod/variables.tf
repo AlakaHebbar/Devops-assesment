@@ -96,6 +96,21 @@ variable "existing_github_oidc_provider_arn" {
   default = null
 }
 
+variable "github_codeconnections_arn" {
+  description = "AWS CodeConnections GitHub connection used by the in-VPC CodeBuild runner. Create and approve it once in the console."
+  type        = string
+}
+
+# --- Terraform state (from infra/bootstrap; read by the CI plan role) ---
+
+variable "state_bucket_name" {
+  type = string
+}
+
+variable "state_kms_key_arn" {
+  type = string
+}
+
 # --- Edge / DNS ---
 
 variable "hosted_zone_name" {

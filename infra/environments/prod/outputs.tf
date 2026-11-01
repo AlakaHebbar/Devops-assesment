@@ -36,6 +36,26 @@ output "ci_image_publisher_role_arn" {
   value = module.ci_identity.image_publisher_role_arn
 }
 
+output "terraform_plan_role_arn" {
+  description = "GitHub variable AWS_TERRAFORM_PLAN_ROLE_ARN."
+  value       = module.ci_terraform.plan_role_arn
+}
+
+output "terraform_apply_role_arn" {
+  description = "GitHub variable AWS_TERRAFORM_APPLY_ROLE_ARN."
+  value       = module.ci_terraform.apply_role_arn
+}
+
+output "ci_runner_project_name" {
+  description = "GitHub variable CI_RUNNER_PROJECT (CodeBuild runner label)."
+  value       = module.ci_runner.project_name
+}
+
+output "gitops_repo_secret_arn" {
+  description = "Secrets Manager secret holding the Argo CD deploy key (read by infra/platform)."
+  value       = aws_secretsmanager_secret.gitops_repo_key.arn
+}
+
 output "log_bucket_name" {
   value = module.log_archive.bucket_name
 }

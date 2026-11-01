@@ -15,3 +15,11 @@ crash.log
 *.tfvars
 !*.tfvars.example
 backend.hcl
+
+# CI-generated plan output
+infra/**/tfplan
+infra/**/plan.txt
+infra/**/comment.md
+
+# IDE
+.idea/
