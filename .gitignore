@@ -1,3 +1,17 @@
+# Node / Next.js
 node_modules/
 .next/
+*.tsbuildinfo
+
+# Local env
 .env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.tfvars
+!*.tfvars.example
+backend.hcl

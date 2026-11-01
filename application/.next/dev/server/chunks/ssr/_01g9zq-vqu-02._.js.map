@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 4, "column": 0}, "map": {"version":3,"sources":["file:///Users/alaka/Documents/Alaka_learning/New/application/node_modules/next/src/server/route-modules/app-page/vendored/rsc/react-jsx-dev-runtime.ts"],"sourcesContent":["module.exports = (\n  require('../../module.compiled') as typeof import('../../module.compiled')\n).vendored['react-rsc']!.ReactJsxDevRuntime\n"],"names":["module","exports","require","vendored","ReactJsxDevRuntime"],"mappings":"AAAAA,OAAOC,OAAO,GACZC,QAAQ,4HACRC,QAAQ,CAAC,YAAY,CAAEC,kBAAkB","ignoreList":[0]}},
-    {"offset": {"line": 9, "column": 0}, "map": {"version":3,"sources":["file:///Users/alaka/Documents/Alaka_learning/New/application/src/app/layout.tsx"],"sourcesContent":["import type { ReactNode } from \"react\";\n\nexport default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {\n  return (\n    <html lang=\"en\">\n      <body style={{ margin: 0 }}>{children}</body>\n    </html>\n  );\n}\n"],"names":["RootLayout","children","lang","style","margin"],"mappings":";;;;;;AAEe,SAASA,WAAW,EAAEC,QAAQ,EAAqC;IAChF,qBACE,8OAAC;QAAKC,MAAK;kBACT,cAAA,8OAAC;YAAKC,OAAO;gBAAEC,QAAQ;YAAE;sBAAIH;;;;;;;;;;;AAGnC"}}]
-}
