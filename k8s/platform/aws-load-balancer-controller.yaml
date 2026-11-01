@@ -1,0 +1,50 @@
+# Provisions the ALB for the service's Ingress. Its IAM role is bound to the
+# kube-system/aws-load-balancer-controller service account with EKS Pod
+# Identity (infra/modules/workload-identity).
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: aws-load-balancer-controller
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            environment: prod
+  template:
+    metadata:
+      name: aws-load-balancer-controller
+    spec:
+      project: platform
+      source:
+        repoURL: https://aws.github.io/eks-charts
+        chart: aws-load-balancer-controller
+        # Keep in step with infra/modules/workload-identity/policies/aws-load-balancer-controller.json.
+        targetRevision: 3.6.0
+        helm:
+          valuesObject:
+            clusterName: '{{ .metadata.annotations.cluster_name }}'
+            region: '{{ .metadata.annotations.aws_region }}'
+            vpcId: '{{ .metadata.annotations.vpc_id }}'
+            replicaCount: 2
+            serviceAccount:
+              create: true
+              name: aws-load-balancer-controller
+            podDisruptionBudget:
+              maxUnavailable: 1
+      destination:
+        server: '{{ .server }}'
+        namespace: kube-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m

@@ -1,4 +1,5 @@
-# Consumed by infra/platform (via remote state) and by the k8s manifests.
+# Consumed by infra/gitops-bootstrap (via remote state), which hands the
+# service-facing values to Argo CD as cluster-Secret annotations.
 
 output "region" {
   value = var.region
@@ -46,13 +47,8 @@ output "terraform_apply_role_arn" {
   value       = module.ci_terraform.apply_role_arn
 }
 
-output "ci_runner_project_name" {
-  description = "GitHub variable CI_RUNNER_PROJECT (CodeBuild runner label)."
-  value       = module.ci_runner.project_name
-}
-
 output "gitops_repo_secret_arn" {
-  description = "Secrets Manager secret holding the Argo CD deploy key (read by infra/platform)."
+  description = "Secrets Manager secret holding the Argo CD deploy key (read by infra/gitops-bootstrap)."
   value       = aws_secretsmanager_secret.gitops_repo_key.arn
 }
 

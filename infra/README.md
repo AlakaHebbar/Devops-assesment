@@ -6,14 +6,13 @@ Terraform for the production AWS environment. See [../ARCHITECTURE.md](../ARCHIT
 infra/
 ├── bootstrap/              # state bucket + KMS (local state, apply once)
 ├── environments/prod/      # core: VPC, EKS, ECR, IAM, Route 53/ACM/WAF, log bucket, alarms
-├── platform/               # Helm: LB controller, external-dns, metrics-server, Fluent Bit, Argo CD
+├── gitops-bootstrap/       # once, by an operator: Argo CD + root app (add-ons then come from k8s/platform)
 └── modules/
     ├── network/            # VPC, subnets, NAT per AZ, flow logs, VPC endpoints
     ├── eks/                # cluster, KMS, node group, add-ons, access entries
     ├── ecr/                # immutable private registry
     ├── ci-identity/        # GitHub OIDC + image publisher role
     ├── ci-terraform/       # Terraform plan (PR) and apply (production env) roles
-    ├── ci-runner/          # CodeBuild-hosted GitHub Actions runner in the VPC
     ├── workload-identity/  # Pod Identity roles (app, fluent-bit, LBC, external-dns)
     ├── log-archive/        # S3 log bucket
     ├── edge/               # Route 53, ACM, WAFv2
@@ -43,17 +42,7 @@ terraform apply core.tfplan
 
 If `create_hosted_zone = true`, delegate the domain to `hosted_zone_name_servers` before the ACM validation can finish.
 
-## 3. Platform stack
-
-Run from a host that can reach the private EKS API (VPN / SSM / in-VPC runner).
-
-```bash
-cd infra/platform
-terraform init -backend-config=../environments/prod/backend.hcl
-terraform apply -var state_bucket=<state bucket>
-```
-
-## 4. GitOps and CI setup (once)
+## 3. GitOps and CI setup (once)
 
 1. **Deploy key for Argo CD.** The repository is private, so Argo CD needs a read-only key.
    1. Generate a key pair:
@@ -70,17 +59,36 @@ terraform apply -var state_bucket=<state bucket>
         --secret-string file://argocd-deploy-key
       ```
 
-2. **CodeConnections.** Create a GitHub connection in the AWS console (Developer Tools → Connections) and approve it in GitHub. Put its ARN in `github_codeconnections_arn` before the core apply.
-3. **GitHub environment.** Create an environment named `production` with required reviewers. Its deployment branches should be limited to `main`.
-4. **GitHub variables and secrets.** Set the variables and secrets listed in [ARCHITECTURE.md](../ARCHITECTURE.md#secrets-and-ci-configuration). Most values come from:
+2. **GitHub environment.** Create an environment named `production` with required reviewers. Its deployment branches should be limited to `main`.
+3. **GitHub variables and secrets.** Set the variables and secrets listed in [ARCHITECTURE.md](../ARCHITECTURE.md#secrets-and-ci-configuration). Most values come from:
 
    ```bash
    terraform -chdir=infra/environments/prod output
    ```
 
-5. **Install Argo CD.** Apply the platform stack (step 3, or merge a PR and approve the pipeline). This installs Argo CD and the `next-bff-service` Application. From then on, everything in `k8s/` is deployed by Argo CD.
+From here on, the core stack is applied by `.github/workflows/infra.yml`. Run applies locally only to break glass.
 
-From here on, both stacks are applied by `.github/workflows/infra.yml`. Run applies locally only to break glass.
+## 4. GitOps bootstrap (once per cluster)
+
+This is the only Terraform that talks to Kubernetes. Run it from a host that can reach the private EKS API (VPN or SSM port-forward), with one of the `eks_admin_role_arns` roles.
+
+```bash
+cd infra/gitops-bootstrap
+terraform init -backend-config=../environments/prod/backend.hcl
+terraform apply \
+  -var state_bucket=<state bucket> \
+  -var gitops_repo_url=git@github.com:<owner>/<repo>.git
+```
+
+It installs Argo CD, the repository and cluster Secrets, the AppProjects and the root application. Argo CD then syncs [`k8s/platform/`](../k8s/platform), which deploys:
+- the AWS Load Balancer Controller
+- external-dns
+- metrics-server
+- Fluent Bit
+- the service
+- Argo CD itself
+
+From then on, every change inside the cluster, including add-on and Argo CD upgrades, is a commit. Re-run this stack only to rebuild a cluster, or after core outputs it publishes change, such as the hostname or certificate.
 
 ## 5. Deploy and roll back the service
 

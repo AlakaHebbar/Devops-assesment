@@ -1,11 +1,12 @@
 flowchart LR
     users(["Users / browsers"])
     dev(["Engineers<br/>pull requests"])
+    ops(["Operator · once per cluster<br/>infra/gitops-bootstrap"])
 
     subgraph github["GitHub"]
         repo["Git repository · main<br/>application/ · k8s/ · infra/"]
-        appci["app-ci workflow<br/>lint · build · scan · push<br/>commit image tag to k8s/"]
-        infraci["infra workflow<br/>PR: fmt · validate · tflint · plan<br/>main: apply after approval"]
+        appci["app-ci workflow · every push<br/>lint · build · scan · push<br/>commit image tag to k8s/"]
+        infraci["infra workflow · AWS APIs only<br/>PR: fmt · validate · tflint · plan<br/>main: apply after approval"]
         env["production environment<br/>required reviewers"]
         store["Actions secrets / variables<br/>tfvars · role ARNs"]
     end
@@ -42,13 +43,12 @@ flowchart LR
             end
 
             subgraph private["Private subnets"]
-                runner["CodeBuild GitHub Actions runner<br/>ephemeral · in-VPC"]
                 endpoints["VPC endpoints<br/>ECR · S3 · STS · EKS Auth · Logs · Secrets Manager"]
 
-                subgraph eks["EKS · private API endpoint · KMS-encrypted secrets"]
+                subgraph eks["EKS · private API endpoint · no CI access entries"]
                     api["Kubernetes API"]
-                    subgraph platform["Platform add-ons (infra/platform, Helm)"]
-                        argocd["Argo CD<br/>auto-sync · prune · self-heal"]
+                    argocd["Argo CD · manages itself<br/>auto-sync · prune · self-heal"]
+                    subgraph platform["Platform add-ons (k8s/platform ApplicationSets)"]
                         lbc["AWS Load Balancer Controller"]
                         extdns["external-dns"]
                         ms["metrics-server"]
@@ -74,6 +74,7 @@ flowchart LR
     %% Delivery: CI changes Git, Argo CD changes the cluster
     appci -->|"OIDC"| pub -->|"docker push :sha"| ecr
     argocd -->|"SSH deploy key · poll main"| repo
+    argocd -->|"k8s/platform"| platform
     argocd -->|"apply k8s/"| ing
     argocd --> app
     argocd --> smoke
@@ -85,8 +86,7 @@ flowchart LR
     infraci -->|"apply after approval"| apply
     plan -.-> state
     apply --> state
-    infraci -->|"platform jobs"| runner
-    runner -->|"443"| api
+    ops -->|"install Argo CD · root app"| api
 
     %% Controllers
     lbc -->|"provisions"| alb

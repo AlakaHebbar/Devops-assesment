@@ -7,8 +7,7 @@ eks_admin_role_arns = [
   "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_AdministratorAccess_xxxxxxxx",
 ]
 
-github_repository          = "your-org/devops-challenge"
-github_codeconnections_arn = "arn:aws:codeconnections:us-east-1:123456789012:connection/00000000-0000-0000-0000-000000000000"
+github_repository = "your-org/devops-challenge"
 
 # From the infra/bootstrap outputs.
 state_bucket_name = "next-bff-tfstate-123456789012-us-east-1"

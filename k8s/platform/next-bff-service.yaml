@@ -1,0 +1,71 @@
+# The service: watches k8s/ on main and applies every change. Automated sync
+# with prune and self-heal reverts manual changes in the cluster. Roll back by
+# reverting the deploy commit in Git.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: next-bff-service
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            environment: prod
+  template:
+    metadata:
+      # No resources finalizer on purpose: deleting the Application must not
+      # take production down with it.
+      name: next-bff-service
+    spec:
+      project: next-bff
+      source:
+        repoURL: '{{ .metadata.annotations.gitops_repo_url }}'
+        targetRevision: '{{ .metadata.annotations.gitops_revision }}'
+        path: k8s
+        kustomize:
+          # Environment values from the core stack, so k8s/ stays free of
+          # account IDs and ARNs.
+          patches:
+            - target:
+                kind: Ingress
+                name: next-bff-service
+              patch: |
+                - op: add
+                  path: /spec/rules/0/host
+                  value: {{ .metadata.annotations.domain_name }}
+                - op: add
+                  path: /metadata/annotations/alb.ingress.kubernetes.io~1certificate-arn
+                  value: {{ .metadata.annotations.certificate_arn }}
+                - op: add
+                  path: /metadata/annotations/alb.ingress.kubernetes.io~1wafv2-acl-arn
+                  value: {{ .metadata.annotations.web_acl_arn }}
+                - op: add
+                  path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
+                  value: {{ .metadata.annotations.domain_name }}
+      destination:
+        server: '{{ .server }}'
+        namespace: '{{ .metadata.annotations.service_namespace }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=false # k8s/namespace.yaml carries the Pod Security labels
+          - PrunePropagationPolicy=foreground
+          - RespectIgnoreDifferences=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m
+      # The HPA owns the replica count.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          name: next-bff-service
+          jsonPointers:
+            - /spec/replicas

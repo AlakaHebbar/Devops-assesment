@@ -1,17 +1,17 @@
 # devops-challenge
 
 A stateless Next.js service (`next-bff-service`) running on Amazon EKS and delivered with GitOps.
-- `infra/` holds the Terraform: VPC, EKS, ECR, IAM, Route 53/ACM/WAF, S3 log archive, CI identities, and Argo CD.
-- `k8s/` holds the service manifests, which Argo CD deploys.
+- `infra/` holds the Terraform: VPC, EKS, ECR, IAM, Route 53/ACM/WAF, S3 log archive and CI identities, plus the one-time Argo CD bootstrap.
+- `k8s/` holds the service manifests. `k8s/platform/` holds the Argo CD ApplicationSets for the add-ons and the service. Argo CD deploys both.
 - `.github/workflows/` holds the CI pipelines.
 
 ## Layout
 
 ```
 devops-challenge/
-├── infra/                 # Terraform: bootstrap, environments/prod, platform, modules
+├── infra/                 # Terraform: bootstrap, environments/prod, gitops-bootstrap, modules
 ├── application/           # Next.js app + Dockerfile
-├── k8s/                   # Kubernetes manifests (kustomize)
+├── k8s/                   # Service manifests (kustomize); platform/ = Argo CD ApplicationSets
 ├── .github/workflows/     # CI: app-ci, infra, security
 ├── docker-compose.yml
 ├── .env.example
@@ -57,7 +57,7 @@ docker push "${IMAGE_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
 ## CI/CD (Part 3)
 
 ```
-push to main ─▶ app-ci: lint · build · Trivy · push ECR :<sha> ─▶ commit k8s/kustomization.yaml newTag=<sha>
+push to main ─▶ app-ci: lint · build ─▶ (if application/ changed) Trivy · push ECR :<sha> ─▶ commit k8s/kustomization.yaml newTag=<sha>
                                                                           │
                                        Argo CD (in cluster) polls main ◀──┘ ─▶ sync k8s/ (prune, self-heal) ─▶ PostSync GET /api/health
 ```

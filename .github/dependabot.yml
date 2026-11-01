@@ -23,6 +23,6 @@ updates:
     directories:
       - /infra/bootstrap
       - /infra/environments/prod
-      - /infra/platform
+      - /infra/gitops-bootstrap
     schedule:
       interval: weekly

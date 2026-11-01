@@ -23,11 +23,9 @@ module "eks" {
   node_min_size                = var.node_min_size
   node_desired_size            = var.node_desired_size
   node_max_size                = var.node_max_size
-
-  # The Terraform apply role installs the platform Helm releases (Argo CD among
-  # them); the plan role only reads.
-  admin_role_arns = concat(var.eks_admin_role_arns, [module.ci_terraform.apply_role_arn])
-  view_role_arns  = [module.ci_terraform.plan_role_arn]
+  # Humans only. CI roles get no access entry: the pipelines never call the
+  # Kubernetes API, Argo CD is the only thing that changes the cluster.
+  admin_role_arns = var.eks_admin_role_arns
 }
 
 module "ecr" {
@@ -50,27 +48,16 @@ module "ci_identity" {
 module "ci_terraform" {
   source = "../../modules/ci-terraform"
 
-  name                   = local.name
-  github_repository      = var.github_repository
-  oidc_provider_arn      = module.ci_identity.oidc_provider_arn
-  state_bucket_arn       = "arn:aws:s3:::${var.state_bucket_name}"
-  state_kms_key_arn      = var.state_kms_key_arn
-  gitops_repo_secret_arn = aws_secretsmanager_secret.gitops_repo_key.arn
-}
-
-module "ci_runner" {
-  source = "../../modules/ci-runner"
-
-  name                      = local.name
-  github_repository         = var.github_repository
-  codeconnections_arn       = var.github_codeconnections_arn
-  vpc_id                    = module.network.vpc_id
-  subnet_ids                = module.network.private_subnet_ids
-  cluster_security_group_id = module.eks.cluster_security_group_id
+  name              = local.name
+  github_repository = var.github_repository
+  oidc_provider_arn = module.ci_identity.oidc_provider_arn
+  state_bucket_arn  = "arn:aws:s3:::${var.state_bucket_name}"
+  state_kms_key_arn = var.state_kms_key_arn
 }
 
 # Read-only GitHub deploy key Argo CD uses to pull this (private) repository.
-# Terraform creates only the empty secret; an operator stores the private key:
+# Terraform creates only the empty secret; an operator stores the private key,
+# and infra/gitops-bootstrap hands it to Argo CD:
 #   aws secretsmanager put-secret-value --secret-id prod/argocd/repo-deploy-key \
 #     --secret-string file://argocd-deploy-key
 resource "aws_secretsmanager_secret" "gitops_repo_key" {

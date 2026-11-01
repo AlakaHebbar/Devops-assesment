@@ -14,7 +14,11 @@ npx -y @mermaid-js/mermaid-cli -i architecture/architecture.mmd -o architecture/
 
 ## Scope
 
-One AWS production account and region. A VPC across three Availability Zones holds a private EKS cluster that runs `next-bff-service`. GitHub hosts the code and the pipelines. Every box in the diagram is defined in this repository: AWS resources in `infra/`, workload manifests in `k8s/`, pipelines in `.github/workflows/`.
+One AWS production account and region. A VPC across three Availability Zones holds a private EKS cluster that runs `next-bff-service`. GitHub hosts the code and the pipelines. Every box in the diagram is defined in this repository:
+- **AWS resources:** `infra/`
+- **Workload manifests:** `k8s/`
+- **Argo CD ApplicationSets:** `k8s/platform/`
+- **Pipelines:** `.github/workflows/`
 
 ## Flows
 
@@ -27,9 +31,9 @@ One AWS production account and region. A VPC across three Availability Zones hol
 
 ### 2. Application delivery: CI changes Git, Argo CD changes the cluster
 
-1. A merge to `main` that touches `application/` starts **app-ci**.
-2. **app-ci** lints and builds the app.
-3. It assumes `ci-image-publisher` through GitHub OIDC, builds the image, scans it with Trivy (CRITICAL findings fail the job) and pushes `<ecr>/next-bff-service:<commit sha>`. ECR tags are immutable.
+1. Every push to `main` starts **app-ci**, which lints and builds the app.
+2. If the push changed `application/`, the image and deploy jobs run next.
+3. They assume `ci-image-publisher` through GitHub OIDC, builds the image, scans it with Trivy (CRITICAL findings fail the job) and pushes `<ecr>/next-bff-service:<commit sha>`. ECR tags are immutable.
 4. It then runs `kustomize edit set image` in `k8s/` and pushes a `deploy(next-bff-service): <sha>` commit to `main`.
 5. **Argo CD** runs inside the cluster and polls `main` over SSH with a read-only deploy key. It applies `k8s/` with automated sync, prune and self-heal: manual changes in the cluster are reverted, and deleted manifests are removed.
 6. **Health:** the Deployment only becomes ready when the `/api/health` readiness probes pass. After each sync a PostSync Job calls `/api/health` through the Service, and a failure marks the sync as failed.
@@ -44,9 +48,16 @@ CI never holds cluster credentials and never runs `kubectl`.
    - plans the core stack and the platform stack with the read-only `ci-terraform-plan` role
    - posts both plans as PR comments
 2. **After a merge to `main`**, the `apply` job waits in the `production` GitHub environment for a required reviewer. Only jobs in that environment can assume `ci-terraform-apply`. It re-plans and applies core, then platform.
-3. **Where the platform jobs run:** the platform stack talks to the private EKS API, so its jobs run on an ephemeral CodeBuild runner inside the private subnets. Its security group is the only thing allowed into the cluster security group on 443.
+3. **What it touches:** only the core stack, through AWS APIs. No CI role has an EKS access entry, so the pipeline can't reach the Kubernetes API.
 
-### 4. Logs
+### 4. Cluster contents: bootstrap once, then Git
+
+1. **Bootstrap:** an operator applies `infra/gitops-bootstrap` once, from inside the VPC. It installs Argo CD, the repository and cluster Secrets, the AppProjects and the root application.
+2. **Root application:** syncs the ApplicationSets in `k8s/platform/`. They deploy the AWS Load Balancer Controller, external-dns, metrics-server, Fluent Bit, the service, and Argo CD itself.
+3. **Environment values:** the ApplicationSets read them from annotations on the in-cluster Secret, so Git holds no account IDs or ARNs.
+4. **Changes:** from here on, any change to anything in the cluster is a commit.
+
+### 5. Logs
 
 The app writes JSON to stdout. The Fluent Bit DaemonSet then:
 1. tails the container logs and adds Kubernetes metadata
@@ -62,8 +73,9 @@ The bucket is private, KMS-encrypted and versioned, with lifecycle tiering. The 
 | GitHub → AWS (images) | app-ci on `main` | OIDC → `ci-image-publisher`, ECR push to one repository only |
 | GitHub → AWS (infra plan) | infra workflow on same-repo PRs | OIDC `pull_request` → `ci-terraform-plan`, read-only, cannot read S3 objects outside the state bucket |
 | GitHub → AWS (infra apply) | infra workflow after reviewer approval | OIDC `environment:production` → `ci-terraform-apply` |
-| GitHub → Kubernetes API | only the in-VPC runner, for platform Terraform | Private endpoint, security-group rule, EKS access entry |
-| Git → cluster workloads | Argo CD only | Pulls with a read-only deploy key held in Secrets Manager |
+| GitHub → Kubernetes API | nobody | Private endpoint; no CI role has an EKS access entry |
+| Operator → Kubernetes API | `eks_admin_role_arns` (humans), for the one-time bootstrap and debugging | VPN or SSM into the VPC, EKS access entry |
+| Git → cluster | Argo CD only (service, add-ons, itself) | Pulls with a read-only deploy key held in Secrets Manager |
 | Pods → AWS | app, Fluent Bit, LB controller, external-dns | One EKS Pod Identity role each; IMDS blocked for pods (hop limit 1) |
 | Internet → service | users | Route 53 → WAF → ALB (TLS) → pods; nodes have no public IPs |
 
@@ -71,5 +83,5 @@ The bucket is private, KMS-encrypted and versioned, with lifecycle tiering. The 
 
 - **Zones:** three AZs, each with its own subnets and NAT gateway.
 - **Service:** at least 3 replicas spread across zones and hosts, HPA up to 12, PDB `minAvailable: 2`, and rolling updates with `maxUnavailable: 0`.
-- **Platform:** the controllers run 2 replicas each. Argo CD runs in HA mode: Redis HA, plus two replicas of the server, repo-server and ApplicationSet controller.
+- **Platform:** the controllers run 2 replicas each, all managed by Argo CD. Argo CD runs in HA mode: Redis HA, plus two replicas of the server, repo-server and ApplicationSet controller.
 - **Recovery:** Terraform state is versioned and every deploy is a Git commit, so the cluster can be rebuilt from Git plus state.

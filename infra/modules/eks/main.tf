@@ -115,29 +115,6 @@ resource "aws_eks_access_policy_association" "admin" {
   depends_on = [aws_eks_access_entry.admin]
 }
 
-resource "aws_eks_access_entry" "view" {
-  for_each = toset(var.view_role_arns)
-
-  cluster_name  = aws_eks_cluster.this.name
-  principal_arn = each.value
-}
-
-# Read-only, including Secrets: Helm keeps release state in Secrets, so a
-# `terraform plan` of infra/platform needs to read them.
-resource "aws_eks_access_policy_association" "view" {
-  for_each = toset(var.view_role_arns)
-
-  cluster_name  = aws_eks_cluster.this.name
-  principal_arn = each.value
-  policy_arn    = "arn:${data.aws_partition.current.partition}:eks::aws:cluster-access-policy/AmazonEKSAdminViewPolicy"
-
-  access_scope {
-    type = "cluster"
-  }
-
-  depends_on = [aws_eks_access_entry.view]
-}
-
 # --- Core add-ons ------------------------------------------------------------
 # Versions are left to the EKS default for the cluster version; bump them
 # deliberately with `aws eks describe-addon-versions` during upgrades.
@@ -307,7 +284,7 @@ resource "aws_eks_addon" "cloudwatch_observability" {
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
 
-  # Metrics only: container log shipping is Fluent Bit -> S3 (see infra/platform).
+  # Metrics only: container log shipping is Fluent Bit -> S3 (see k8s/platform/fluent-bit.yaml).
   configuration_values = jsonencode({
     containerLogs = { enabled = false }
   })

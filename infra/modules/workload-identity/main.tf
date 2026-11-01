@@ -68,7 +68,7 @@ locals {
     aws-load-balancer-controller = {
       namespace       = "kube-system"
       service_account = "aws-load-balancer-controller"
-      # Upstream policy, pinned to the controller version in infra/platform.
+      # Upstream policy, pinned to the controller version in k8s/platform/aws-load-balancer-controller.yaml.
       policy = file("${path.module}/policies/aws-load-balancer-controller.json")
     }
     external-dns = {

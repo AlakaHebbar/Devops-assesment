@@ -31,7 +31,7 @@ variable "endpoint_public_access_cidrs" {
 }
 
 variable "admin_role_arns" {
-  description = "IAM role ARNs (e.g. IAM Identity Center admin role, infra deploy role) granted cluster-admin through EKS access entries."
+  description = "IAM role ARNs (e.g. IAM Identity Center admin role) granted cluster-admin through EKS access entries."
   type        = list(string)
   default     = []
 }
@@ -64,10 +64,4 @@ variable "node_max_size" {
 variable "node_disk_size_gib" {
   type    = number
   default = 50
-}
-
-variable "view_role_arns" {
-  description = "IAM role ARNs granted cluster-wide read access (AmazonEKSAdminViewPolicy), e.g. the Terraform plan role."
-  type        = list(string)
-  default     = []
 }

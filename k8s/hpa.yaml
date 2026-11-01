@@ -1,4 +1,4 @@
-# Needs metrics-server (infra/platform).
+# Needs metrics-server (k8s/platform/metrics-server.yaml).
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

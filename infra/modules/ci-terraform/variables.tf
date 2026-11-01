@@ -28,8 +28,3 @@ variable "state_kms_key_arn" {
   description = "KMS key that encrypts the Terraform state."
   type        = string
 }
-
-variable "gitops_repo_secret_arn" {
-  description = "Secrets Manager secret holding the Argo CD repository deploy key."
-  type        = string
-}

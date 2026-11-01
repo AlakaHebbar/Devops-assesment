@@ -1,8 +1,9 @@
-# Provisioned by the AWS Load Balancer Controller (infra/platform). The
+# Provisioned by the AWS Load Balancer Controller (k8s/platform). The
 # environment-specific values (hostname, ACM certificate ARN, WAF web ACL ARN)
-# are not committed here: the Argo CD Application in infra/platform patches
-# them in from the core stack outputs. external-dns then creates the Route 53
-# alias for the host.
+# are not committed here: the Argo CD ApplicationSet in
+# k8s/platform/next-bff-service.yaml patches them in from the cluster-Secret
+# annotations that infra/gitops-bootstrap writes from the core stack outputs.
+# external-dns then creates the Route 53 alias for the host.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

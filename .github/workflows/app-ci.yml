@@ -1,7 +1,8 @@
 # Build the Next.js service and hand the new image to GitOps.
 #
-# push to main:  lint + build -> image tagged with the commit SHA -> ECR
-#                -> commit the tag to k8s/kustomization.yaml -> Argo CD deploys it
+# push to main:  lint + build on every push. When application/ changed: image
+#                tagged with the commit SHA -> ECR -> commit the tag to
+#                k8s/kustomization.yaml -> Argo CD deploys it
 # pull request:  lint + build only
 #
 # This workflow has no cluster credentials and never runs kubectl. AWS access is
@@ -11,9 +12,6 @@ name: app-ci
 on:
   push:
     branches: [main]
-    paths:
-      - application/**
-      - .github/workflows/app-ci.yml
   pull_request:
     paths:
       - application/**
@@ -55,9 +53,36 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
 
-  image:
-    needs: lint-build
+  # Only ship a new image when the app actually changed; a docs or k8s/ change
+  # (including a revert of a deploy commit) must not roll out a fresh build.
+  changes:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # Manual runs, new branches and force-pushes without a usable base always ship.
+          if [[ "$GITHUB_EVENT_NAME" != "push" || -z "$BEFORE" || "$BEFORE" =~ ^0+$ ]] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$BEFORE" "$GITHUB_SHA" -- application/ .github/workflows/app-ci.yml; then
+            echo "app=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    needs: [lint-build, changes]
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
