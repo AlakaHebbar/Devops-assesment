@@ -1,6 +1,6 @@
 # AWS architecture design: Next.js on Amazon EKS
 
-This is an AWS-specific reference diagram. Its standalone Mermaid source is [architecture.mmd](architecture.mmd); the overview and implementation sequence are in [../Architecture.md](../Architecture.md). The diagram shows one production AWS account/region, a VPC across three Availability Zones, and the AWS managed services around the EKS workload.
+This is an AWS-specific reference diagram. Its standalone Mermaid source is [architecture.mmd](architecture.mmd); the overview and implementation sequence are in [../ARCHITECTURE.md](../ARCHITECTURE.md). The diagram shows one production AWS account/region, a VPC across three Availability Zones, and the AWS managed services around the EKS workload.
 
 ```mermaid
 flowchart LR

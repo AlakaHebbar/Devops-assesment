@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      context: ./application
+      dockerfile: Dockerfile
+    image: ${IMAGE_REGISTRY:-local}/${IMAGE_NAME:-next-bff-service}:${IMAGE_TAG:-0.1.0}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
