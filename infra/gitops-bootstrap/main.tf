@@ -133,6 +133,7 @@ resource "kubernetes_secret_v1" "in_cluster" {
       aws_region        = var.region
       cluster_name      = local.core.cluster_name
       vpc_id            = local.core.vpc_id
+      vpc_cidr          = local.core.vpc_cidr
       log_bucket_name   = local.core.log_bucket_name
       hosted_zone_id    = local.core.hosted_zone_id
       domain_name       = local.core.domain_name

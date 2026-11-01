@@ -7,7 +7,7 @@ in-cluster Secret that `infra/gitops-bootstrap` writes (the "GitOps bridge"):
 
 | Annotation | Source |
 |---|---|
-| `aws_region`, `cluster_name`, `vpc_id` | core stack |
+| `aws_region`, `cluster_name`, `vpc_id`, `vpc_cidr` | core stack |
 | `log_bucket_name`, `hosted_zone_id` | core stack |
 | `domain_name`, `certificate_arn`, `web_acl_arn` | core stack |
 | `service_namespace`, `gitops_repo_url`, `gitops_revision` | bootstrap variables |

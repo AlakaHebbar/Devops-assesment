@@ -101,9 +101,12 @@ A KMS-encrypted SNS alerts topic (with email subscriptions) and CloudWatch alarm
 
 ### Application runtime: [`k8s/`](k8s)
 
-The manifests contain nothing specific to an environment:
-- The image is the logical name `next-bff-service`. [`kustomization.yaml`](k8s/kustomization.yaml) maps it to the ECR repository and the commit-SHA tag that CI writes.
-- The Ingress hostname, certificate ARN and WAF ARN are patched in by the service's Argo CD ApplicationSet, from the cluster-Secret annotations (see [GitOps](#gitops-argo-cd)).
+Environment values are kept out of the manifests:
+- **The image** is the logical name `next-bff-service`. [`kustomization.yaml`](k8s/kustomization.yaml) maps it to the ECR repository and the commit-SHA tag that CI writes.
+  - That committed line is the deploy record, so it does contain the real ECR URL, account ID included.
+  - Until CI's first run it holds a placeholder account, so the first Argo CD sync shows `ImagePullBackOff` until the first image is pushed.
+- **Everything else** (the Ingress hostname, certificate ARN, WAF ARN and the NetworkPolicy's VPC CIDR) is patched in by the service's Argo CD ApplicationSet from the cluster-Secret annotations (see [GitOps](#gitops-argo-cd)).
+  - The CIDR patch starts with a JSON-patch `test` on the expected default, so if the manifest's layout changes, the sync fails loudly instead of patching the wrong rule.
 
 Restricted Pod Security Standard on the namespace. Non-root UID 1001, read-only root filesystem, all capabilities dropped, seccomp `RuntimeDefault`. Startup, readiness and liveness probes on `/api/health`. Resource requests and limits. Pods are spread across zones and hosts. **HPA** scales between 3 and 12 replicas. A **PDB** keeps at least 2 pods up. Rolling updates use `maxUnavailable: 0` and a `preStop` delay so the ALB drains a pod before it stops. A **NetworkPolicy** allows ingress only from the VPC on port 3000.
 
@@ -148,9 +151,10 @@ All third-party actions are pinned to commit SHAs, and Dependabot keeps them cur
 2. **Creates the repository Secret** with a read-only GitHub deploy key, because the repo is private.
    - The key is stored in Secrets Manager (`prod/argocd/repo-deploy-key`; the core stack creates the empty secret).
    - It never appears in Git or in Helm values.
-3. **Creates the in-cluster Secret** with the core stack outputs as annotations: region, cluster name, VPC, log bucket, hosted zone, hostname, certificate ARN, WAF ARN. This is the GitOps-bridge pattern.
+3. **Creates the in-cluster Secret** with the core stack outputs as annotations: region, cluster name, VPC ID and CIDR, log bucket, hosted zone, hostname, certificate ARN, WAF ARN. This is the GitOps-bridge pattern.
    - The ApplicationSets read those values through the cluster generator.
-   - `k8s/` and `k8s/platform/` hold no account IDs, ARNs or hostnames.
+   - The manifests hardcode no hostnames, ARNs or VPC ranges.
+   - The one environment value in Git is deliberate: the image reference that CI commits to `kustomization.yaml` (`<account>.dkr.ecr.<region>.amazonaws.com/next-bff-service:<sha>`). That line *is* the deploy record.
 4. **Creates three AppProjects** as security boundaries:
    - `bootstrap` may only create ApplicationSets in `argocd`.
    - `platform` holds the add-ons, in `argocd`, `kube-system` and `logging` only.

@@ -26,8 +26,8 @@ spec:
         targetRevision: '{{ .metadata.annotations.gitops_revision }}'
         path: k8s
         kustomize:
-          # Environment values from the core stack, so k8s/ stays free of
-          # account IDs and ARNs.
+          # Environment values from the core stack (cluster-Secret annotations),
+          # so the manifests don't hardcode hostnames, ARNs or the VPC range.
           patches:
             - target:
                 kind: Ingress
@@ -45,6 +45,16 @@ spec:
                 - op: add
                   path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
                   value: {{ .metadata.annotations.domain_name }}
+            - target:
+                kind: NetworkPolicy
+                name: next-bff-service
+              patch: |
+                - op: test
+                  path: /spec/ingress/0/from/0/ipBlock/cidr
+                  value: 10.20.0.0/16
+                - op: replace
+                  path: /spec/ingress/0/from/0/ipBlock/cidr
+                  value: {{ .metadata.annotations.vpc_cidr }}
       destination:
         server: '{{ .server }}'
         namespace: '{{ .metadata.annotations.service_namespace }}'

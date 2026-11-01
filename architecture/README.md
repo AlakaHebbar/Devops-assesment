@@ -54,7 +54,7 @@ CI never holds cluster credentials and never runs `kubectl`.
 
 1. **Bootstrap:** an operator applies `infra/gitops-bootstrap` once, from inside the VPC. It installs Argo CD, the repository and cluster Secrets, the AppProjects and the root application.
 2. **Root application:** syncs the ApplicationSets in `k8s/platform/`. They deploy the AWS Load Balancer Controller, external-dns, metrics-server, Fluent Bit, the service, and Argo CD itself.
-3. **Environment values:** the ApplicationSets read them from annotations on the in-cluster Secret, so Git holds no account IDs or ARNs.
+3. **Environment values:** the ApplicationSets read them from annotations on the in-cluster Secret, so the manifests hardcode no hostnames, ARNs or VPC ranges. The only environment value in Git is the image reference CI commits, which is the deploy record.
 4. **Changes:** from here on, any change to anything in the cluster is a commit.
 
 ### 5. Logs
