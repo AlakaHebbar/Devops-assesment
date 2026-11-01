@@ -1,0 +1,43 @@
+# Enforced by the VPC CNI network policy agent (enabled in infra/modules/eks).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: next-bff-service
+  labels:
+    app: next-bff-service
+spec:
+  podSelector:
+    matchLabels:
+      app: next-bff-service
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # ALB (target-type ip) and kubelet probes come from inside the VPC.
+    - from:
+        - ipBlock:
+            cidr: 10.20.0.0/16
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # HTTPS to AWS APIs (VPC endpoints) and the Pod Identity agent.
+    - ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
+            cidr: 169.254.170.23/32
+      ports:
+        - protocol: TCP
+          port: 80

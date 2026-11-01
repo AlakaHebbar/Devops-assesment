@@ -5,17 +5,49 @@ metadata:
   labels:
     app: next-bff-service
 spec:
-  replicas: 2
+  # Replica count is owned by the HPA (hpa.yaml); this is only the initial value.
+  replicas: 3
+  revisionHistoryLimit: 5
   selector:
     matchLabels:
       app: next-bff-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
   template:
     metadata:
       labels:
         app: next-bff-service
     spec:
+      serviceAccountName: next-bff-service
+      # Pod Identity injects credentials via env + a projected token; it does not need the default SA token mount.
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: next-bff-service
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: next-bff-service
       containers:
         - name: next-bff-service
+          # Immutable tag (version or commit SHA) from ECR; never "latest".
           image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/next-bff-service:0.1.0
           imagePullPolicy: IfNotPresent
           ports:
@@ -28,19 +60,51 @@ spec:
               value: "3000"
             - name: HOSTNAME
               value: 0.0.0.0
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /api/health
               port: http
-            initialDelaySeconds: 5
             periodSeconds: 10
-            timeoutSeconds: 5
+            timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /api/health
               port: http
-            initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
+          lifecycle:
+            # Give the ALB time to deregister the pod before the process stops.
+            preStop:
+              sleep:
+                seconds: 10
+          volumeMounts:
+            - name: next-cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

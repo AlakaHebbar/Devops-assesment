@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: next-bff-service
+  labels:
+    app: next-bff-service
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: next-bff-service

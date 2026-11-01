@@ -8,7 +8,7 @@ flowchart LR
     r53 --> waf["AWS WAFv2<br/>Web ACL"]
     waf --> alb["Application Load Balancer<br/>ACM TLS certificate"]
 
-    repo["Git repository<br/>application + Helm config"] --> ci["GitHub Actions CI<br/>test · scan · sign"]
+    repo["Git repository<br/>application + k8s manifests"] --> ci["GitHub Actions CI (planned)<br/>build · push"]
     ci -->|"OIDC assume-role; push image"| ecr["Amazon ECR<br/>immutable image tags"]
 
     subgraph aws["AWS production account / region"]
@@ -25,14 +25,17 @@ flowchart LR
                         svc["Kubernetes internal Service"]
                         app["Next.js Deployment<br/>replicas · probes · HPA"]
                         fluent["Fluent Bit DaemonSet<br/>buffer + retry"]
-                        argocd["Argo CD<br/>GitOps reconciler"]
+                        extdns["external-dns<br/>Route 53 alias records"]
+                        metrics["metrics-server<br/>feeds HPA"]
+                        argocd["Argo CD (planned)<br/>GitOps reconciler"]
                         ing --> svc --> app
                         app -. "stdout / stderr" .-> fluent
                         argocd -. "reconciles manifests" .-> app
+                        metrics -. "CPU metrics" .-> app
                     end
                 end
             end
-            endpoints["VPC endpoints<br/>ECR · S3 · STS · Secrets Manager · Logs"]
+            endpoints["VPC endpoints<br/>ECR · S3 · STS · EKS Auth · Secrets Manager · Logs"]
         end
 
         secrets["AWS Secrets Manager<br/>KMS encryption"]
@@ -54,6 +57,8 @@ flowchart LR
         iam -. "Pod Identity associations / policies" .-> app
         iam -. "Pod Identity associations / policies" .-> fluent
         iam -. "Pod Identity associations / policies" .-> ing
+        iam -. "Pod Identity associations / policies" .-> extdns
+        extdns -->|"upsert alias record"| r53
     end
 
     repo -. "reviewed desired state" .-> argocd
@@ -83,5 +88,5 @@ flowchart LR
 ## Practical notes
 
 - This design uses an ALB directly protected by AWS WAFv2; CloudFront is optional, not required. Add CloudFront only for CDN caching/global edge needs, then associate WAF appropriately and update origin/network protections.
-- The diagram is architecture guidance, not a fully provisioned deployment. CIDRs, region, account IDs, DNS name, app port, health paths, sizing, log retention, and compliance settings must be confirmed before Terraform is authored.
+- The diagram matches the Terraform in `infra/` and the manifests in `k8s/`. Components marked "planned" (CI workflow, Argo CD) are not yet configured.
 - No database is included because the service requirements do not mention one. Add a managed data service only if the application needs persistent state.
