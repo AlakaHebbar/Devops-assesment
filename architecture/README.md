@@ -4,6 +4,7 @@
 
 - **Source:** [architecture.mmd](architecture.mmd) (Mermaid). The exported images [architecture.svg](architecture.svg) and [architecture.png](architecture.png) are generated from it.
 - **Narrative and rationale:** [../ARCHITECTURE.md](../ARCHITECTURE.md).
+- **Known gaps and trade-offs:** [room-for-improvement.md](room-for-improvement.md).
 
 GitOps diagrams (embedded in [ARCHITECTURE.md](../ARCHITECTURE.md#cicd-and-gitops)):
 
@@ -39,12 +40,12 @@ One AWS production account and region. A VPC across three Availability Zones hol
 ### 2. Application delivery: CI changes Git, Argo CD changes the cluster
 
 1. Every push to `main` starts **app-ci**, which lints and builds the app.
-2. If the push changed `application/`, the image and deploy jobs run next.
+2. The image and deploy jobs run next, on every push.
 3. They assume `ci-image-publisher` through GitHub OIDC, builds the image, scans it with Trivy (CRITICAL findings fail the job) and pushes `<ecr>/next-bff-service:<commit sha>`. ECR tags are immutable.
 4. It then runs `kustomize edit set image` in `k8s/` and pushes a `deploy(next-bff-service): <sha>` commit to `main`.
 5. **Argo CD** runs inside the cluster and polls `main` over SSH with a read-only deploy key. It applies `k8s/` with automated sync, prune and self-heal: manual changes in the cluster are reverted, and deleted manifests are removed.
 6. **Health:** the Deployment only becomes ready when the `/api/health` readiness probes pass. After each sync a PostSync Job calls `/api/health` through the Service, and a failure marks the sync as failed.
-7. **Rollback:** `git revert` the deploy commit. Argo CD syncs the previous tag.
+7. **Rollback:** `git revert` the commit that broke the app. CI builds the reverted code and Argo CD deploys it. Emergency path: revert the deploy commit with `[skip ci]`, so Argo CD syncs the previous tag without a build.
 
 CI never holds cluster credentials and never runs `kubectl`.
 
@@ -52,9 +53,9 @@ CI never holds cluster credentials and never runs `kubectl`.
 
 1. **On a pull request** that touches `infra/`, the infra workflow:
    - runs `terraform fmt`, `validate` and tflint on every stack
-   - plans the core stack and the platform stack with the read-only `ci-terraform-plan` role
-   - posts both plans as PR comments
-2. **After a merge to `main`**, the `apply` job waits in the `production` GitHub environment for a required reviewer. Only jobs in that environment can assume `ci-terraform-apply`. It re-plans and applies core, then platform.
+   - plans the core stack with the read-only `ci-terraform-plan` role
+   - posts the plan as a PR comment
+2. **After a merge to `main`**, the `apply` job waits in the `production` GitHub environment for a required reviewer. Only jobs in that environment can assume `ci-terraform-apply`. It re-plans and applies the core stack.
 3. **What it touches:** only the core stack, through AWS APIs. No CI role has an EKS access entry, so the pipeline can't reach the Kubernetes API.
 
 ### 4. Cluster contents: bootstrap once, then Git

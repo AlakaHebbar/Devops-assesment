@@ -57,19 +57,19 @@ docker push "${IMAGE_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
 ## CI/CD (Part 3)
 
 ```
-push to main ─▶ app-ci: lint · build ─▶ (if application/ changed) Trivy · push ECR :<sha> ─▶ commit k8s/kustomization.yaml newTag=<sha>
-                                                                          │
-                                       Argo CD (in cluster) polls main ◀──┘ ─▶ sync k8s/ (prune, self-heal) ─▶ PostSync GET /api/health
+push to main ─▶ app-ci: lint · build ─▶ Trivy · push ECR :<sha> ─▶ commit k8s/kustomization.yaml newTag=<sha>
+                                                                │
+                             Argo CD (in cluster) polls main ◀──┘ ─▶ sync k8s/ (prune, self-heal) ─▶ PostSync GET /api/health
 ```
 
 - **Deploy:** merge to `main`. The pipeline commits the image tag, and Argo CD applies it within about 3 minutes.
-- **Roll back:**
+- **Roll back:** revert the commit that broke the app. CI builds the reverted code and Argo CD deploys it.
 
   ```bash
-  git revert <deploy-commit> && git push
+  git revert <bad-app-commit> && git push
   ```
 
-  Argo CD syncs the previous image.
+  For an emergency rollback without a build, see [Rollback](ARCHITECTURE.md#gitops-argo-cd).
 - **Infrastructure:**
   - Open a PR that touches `infra/`, and the plans are posted as comments.
   - After the merge, approve the `production` environment deployment to apply.

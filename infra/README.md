@@ -93,11 +93,13 @@ From then on, every change inside the cluster, including add-on and Argo CD upgr
 ## 5. Deploy and roll back the service
 
 - **Deploy:** merge to `main`. `app-ci` builds, scans and pushes `<ecr>/next-bff-service:<sha>`, then commits that tag to `k8s/kustomization.yaml`. Argo CD syncs it.
-- **Roll back:** revert the deploy commit. ECR keeps the last 50 tagged images, so the target must be one of those.
+- **Roll back:** revert the commit that broke the app. CI builds the reverted code and Argo CD deploys it.
 
   ```bash
-  git revert <deploy-commit> && git push
+  git revert <bad-app-commit> && git push
   ```
+
+  In an emergency, revert the deploy commit with `[skip ci]` in the message instead: no build runs and Argo CD syncs the previous image (ECR keeps the last 50 tags). Then revert or fix the app commit, because the next push rebuilds `main`. See [Rollback](../ARCHITECTURE.md#gitops-argo-cd).
 
 - **Check status** from a host that can reach the API:
 
