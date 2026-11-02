@@ -25,7 +25,7 @@ The service is stateless, so there is no database.
 | **2.4** Manifests in `k8s/`, probes on the BFF, exposed to the internet | [`deployment.yaml`](k8s/deployment.yaml), [`ingress.yaml`](k8s/ingress.yaml) |
 | **3.1** CI on every push to `main`: lint, build, image `:<sha>`, update Git | [`app-ci.yml`](.github/workflows/app-ci.yml) |
 | **3.2** GitOps installed as code, watches `k8s/`, prune and self-heal | [`infra/gitops-bootstrap`](infra/gitops-bootstrap/main.tf), [`k8s/platform/`](k8s/platform) |
-| **3.2** Health from the BFF endpoint; rollback by `git revert` | Readiness probes + [`smoke-test-job.yaml`](k8s/smoke-test-job.yaml); [Rollback](#gitops-argo-cd) |
+| **3.2** Health from the BFF endpoint; rollback by `git revert` of the bad commit | Readiness probes + [`smoke-test-job.yaml`](k8s/smoke-test-job.yaml); [Rollback](#gitops-argo-cd) |
 | **3.3** PRs: format, validate, preview; apply after merge and approval | [`infra.yml`](.github/workflows/infra.yml) |
 | **3.4** CI has no cluster credentials; no secrets in the repo | [CI/CD and GitOps](#cicd-and-gitops), [Secrets](#secrets-and-ci-configuration) |
 
@@ -131,19 +131,16 @@ The numbers follow one deploy. Dotted lines show self-heal (a manual change is r
 
 ### Application CI: [`.github/workflows/app-ci.yml`](.github/workflows/app-ci.yml)
 
-Runs on every push to `main`. Pull requests run only the first job.
+Runs on every push to `main`, and every push ships an image and a deploy commit. Pull requests run only the first job.
 
-1. **lint-build**: `npm ci`, `npm run lint` (ESLint with `eslint-config-next`), `npm run build`. Runs on every push.
-2. **changes**: diffs the push. The image and deploy jobs run only when `application/` (or this workflow) changed.
-   - A docs-only or `k8s/`-only push never rolls out a fresh image.
-   - Neither does reverting a deploy commit, which matters for rollback.
-3. **image**: assumes `ci-image-publisher` through OIDC, then builds with Buildx and the GHA layer cache, passing the commit SHA as `VERSION`/`GIT_SHA`.
+1. **lint-build**: `npm ci`, `npm run lint` (ESLint with `eslint-config-next`), `npm run build`.
+2. **image**: assumes `ci-image-publisher` through OIDC, then builds with Buildx and the GHA layer cache, passing the commit SHA as `VERSION`/`GIT_SHA`.
    - Trivy scans the local image. CRITICAL, fixable findings fail the job before anything is pushed.
    - The image is pushed as `<ecr>/next-bff-service:<commit sha>`.
    - A re-run skips the build if that tag already exists, because tags are immutable.
-4. **update-manifests** ([`update-image-tag.sh`](.github/scripts/update-image-tag.sh)): runs `kustomize edit set image next-bff-service=<ecr>:<sha>` in `k8s/` and pushes a `deploy(next-bff-service): <sha>` commit to `main` using the workflow's `GITHUB_TOKEN`.
+3. **update-manifests** ([`update-image-tag.sh`](.github/scripts/update-image-tag.sh)): runs `kustomize edit set image next-bff-service=<ecr>:<sha>` in `k8s/` and pushes a `deploy(next-bff-service): <sha>` commit to `main` using the workflow's `GITHUB_TOKEN`.
    - That commit is the deploy trigger.
-   - It can't loop: GitHub doesn't start workflows for `GITHUB_TOKEN` commits, and the change is outside `application/`.
+   - It can't loop: GitHub doesn't start workflows for commits pushed with `GITHUB_TOKEN`.
    - **Safe ordering without queues:**
      - Every push to `main` gets its own run, so no push's app change can be dropped by GitHub cancelling a queued run.
      - `git push` itself is the lock: it is rejected if `main` moved, and the script then re-reads `main` and retries.
@@ -187,10 +184,21 @@ Each has automated sync with prune and self-heal, and pinned chart versions. Fai
 - **Health from the BFF endpoint:**
   - **Application health:** comes from its resources. The Deployment is only Healthy once its pods pass readiness probes on `/api/health`, and the ALB target group checks the same path.
   - **Sync result:** after each sync, a `PostSync` hook Job ([`k8s/smoke-test-job.yaml`](k8s/smoke-test-job.yaml)) calls `http://next-bff-service:3000/api/health` through the Service. Anything other than a 2xx marks the sync operation Failed, and the retry policy tries again.
-- **Rollback:** `git revert <deploy commit>` and push. Argo CD syncs the earlier tag within its 3-minute poll.
-  - Immutable tags guarantee it's the same image as before.
-  - ECR keeps the last 50 tagged images, which sets how far back a revert can go.
-  - The revert starts no build (no app code changed), and the next app push deploys normally.
+- **Rollback:** revert the commit that broke the app, and push.
+  ```bash
+  git revert <bad-app-commit> && git push
+  ```
+  - Like every push, the revert goes through CI: the reverted code is built, tagged with the revert's SHA and deployed. Argo CD syncs it within its 3-minute poll.
+  - Reverting only the deploy commit is not enough on its own: that revert is also a push, so CI would rebuild the current (broken) code and deploy it again.
+- **Emergency rollback without a build:** revert the deploy commit and put `[skip ci]` in the message, so no workflow runs and Argo CD syncs the previous tag.
+  ```bash
+  git revert --no-commit <deploy-commit>
+  git commit -m "Roll back next-bff-service to <previous sha> [skip ci]"
+  git push
+  ```
+  - Immutable tags guarantee it's the same image as before. ECR keeps the last 50 tagged images, which sets how far back this can go.
+  - The broken code is still on `main`: the next push rebuilds and redeploys it, so revert or fix the app commit next.
+  - Trade-offs are listed in [architecture/room-for-improvement.md](architecture/room-for-improvement.md).
 - **Deleting an ApplicationSet or Application:** every ApplicationSet sets `preserveResourcesOnDeletion: true`. Without it, Argo CD adds a resources finalizer to generated Applications, so deleting an ApplicationSet file from Git, or the cluster Secret no longer matching its selector, would delete the running service. With it, removal leaves workloads running.
 
 ### Infrastructure pipeline: [`.github/workflows/infra.yml`](.github/workflows/infra.yml)
@@ -224,6 +232,8 @@ There are no secrets in the repository; gitleaks scans every push and PR ([`secu
 Role ARNs are not secrets, but keeping them in variables keeps account IDs out of the repo. The Argo CD deploy key and application secrets live in AWS Secrets Manager.
 
 ## Production assumptions and follow-ups
+
+Known gaps against the requirements, and trade-offs of following them exactly, are in [architecture/room-for-improvement.md](architecture/room-for-improvement.md).
 
 - **Region / account**: `us-east-1` is the default. Run production in a dedicated account and keep non-production in separate accounts with their own `environments/<env>` directory.
 - **Reaching the private API**: only humans need it, for the one-time `infra/gitops-bootstrap` and for `kubectl` debugging. They run from inside the VPC (VPN or SSM port-forward). Alternatively, set `eks_endpoint_public_access` to an office/VPN CIDR.

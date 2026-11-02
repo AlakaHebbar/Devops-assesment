@@ -25,8 +25,11 @@ sequenceDiagram
 
     rect rgba(250, 238, 218, 0.6)
     Note over Dev,K8s: Rollback
-    Dev->>Git: git revert the deploy commit
-    Git->>CI: app-ci lints/builds, no app change → no new image
-    Argo->>Git: sees previous sha in k8s/
-    Argo->>K8s: sync → pods roll back to old image (still in ECR)
+    Dev->>Git: git revert the bad app commit
+    Git->>CI: push to main triggers app-ci
+    CI->>ECR: build + scan + push image :revert-sha
+    CI->>Git: commit newTag = revert-sha
+    Argo->>Git: sees new sha in k8s/
+    Argo->>K8s: sync → pods run the reverted code
+    Note over Dev,K8s: Emergency: revert the deploy commit with [skip ci] → no build, Argo CD syncs the previous image
     end
