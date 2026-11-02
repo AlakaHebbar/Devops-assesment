@@ -1,23 +1,40 @@
 # Keeps pinned versions current; every update arrives as a reviewed PR.
+# Monthly, one grouped PR per ecosystem, minor/patch only: major upgrades
+# can break the build, so they are done by hand when planned.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      github-actions:
+        patterns: ["*"]
 
   - package-ecosystem: npm
     directory: /application
     schedule:
-      interval: weekly
+      interval: monthly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
-      next:
-        patterns: ["next", "eslint-config-next", "react", "react-dom", "@types/react*"]
+      npm:
+        patterns: ["*"]
 
   - package-ecosystem: docker
     directory: /application
     schedule:
-      interval: weekly
+      interval: monthly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      docker:
+        patterns: ["*"]
 
   - package-ecosystem: terraform
     directories:
@@ -25,4 +42,10 @@ updates:
       - /infra/environments/prod
       - /infra/gitops-bootstrap
     schedule:
-      interval: weekly
+      interval: monthly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      terraform:
+        patterns: ["*"]
