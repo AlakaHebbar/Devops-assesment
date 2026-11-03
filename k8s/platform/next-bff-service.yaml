@@ -1,6 +1,6 @@
 # The service: watches k8s/ on main and applies every change. Automated sync
 # with prune and self-heal reverts manual changes in the cluster. Roll back by
-# reverting the deploy commit in Git.
+# reverting the bad app commit in Git (see ARCHITECTURE.md, Rollback).
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

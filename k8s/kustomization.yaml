@@ -12,8 +12,11 @@ resources:
 - networkpolicy.yaml
 - smoke-test-job.yaml
 # Updated by CI (.github/workflows/app-ci.yml) with `kustomize edit set image`
-# after each image push to main. Argo CD deploys whatever is committed here;
-# roll back by reverting the deploy commit.
+# after each image push to main. Argo CD deploys whatever is committed here.
+# Roll back by reverting the bad app commit (CI rebuilds and redeploys); a plain
+# revert of this line is also a push, so CI would redeploy the broken code. For
+# an emergency rollback without a build, revert the deploy commit with
+# [skip ci] (see ARCHITECTURE.md, Rollback).
 images:
 - name: next-bff-service
   newName: 123456789012.dkr.ecr.us-east-1.amazonaws.com/next-bff-service
