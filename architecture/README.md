@@ -14,10 +14,6 @@
 | Kubernetes components | What runs in the cluster: namespaces, the service's resources, add-ons, Argo CD | [k8s-components.png](k8s-components.png) |
 | Application pipeline | How a change ships: PR → CI → ECR → Argo CD → smoke test → rollback | [application-pipeline-activity.png](application-pipeline-activity.png) |
 
-To change a diagram:
-- **Kubernetes components, application pipeline:** the PNG embeds its draw.io source. Open it in [draw.io](https://app.diagrams.net), edit, and export as PNG over the same file with **Include a copy of my diagram** ticked.
-- **Infrastructure:** the PNG has no embedded source. Restore the last one from Git with `git show ad388bd:architecture/infrastructure.drawio > infrastructure.drawio`, edit it, and export with **Include a copy of my diagram** ticked so the next edit doesn't need this step.
-
 ## Scope
 
 One AWS production account in one region, `us-east-1` (an assumption; see [Region and network](../ARCHITECTURE.md#region-and-network-modulesnetwork)). A VPC (`10.20.0.0/16`) across three Availability Zones, with one public `/24` and one private `/19` subnet in each, holds a private EKS cluster that runs `next-bff-service`. GitHub hosts the code and the pipelines. Every box in the diagram is defined in this repository:

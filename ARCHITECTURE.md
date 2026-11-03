@@ -14,7 +14,7 @@ Three diagrams, one per question:
 - **What runs in the cluster:** [k8s-components.png](architecture/k8s-components.png), in [Application runtime](#application-runtime-k8s).
 - **How a change ships:** [application-pipeline-activity.png](architecture/application-pipeline-activity.png), in [CI/CD and GitOps](#cicd-and-gitops).
 
-The request, deploy and log flows, the trust boundaries and how to edit the diagrams are in [architecture/README.md](architecture/README.md).
+The request, deploy and log flows and the trust boundaries are in [architecture/README.md](architecture/README.md).
 
 The service is stateless, so there is no database.
 
