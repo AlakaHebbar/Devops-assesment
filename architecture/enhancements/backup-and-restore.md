@@ -150,6 +150,6 @@ aws kms enable-key --key-id <key-arn>
 ## Gaps and next steps
 
 - **No copy outside the account or region.** A compromised admin, or a region outage, takes the state bucket with it. Add S3 Cross-Region Replication of the state bucket to a separate backup account, with Object Lock.
-- **The bootstrap state is a local file.** Move it into the bucket it creates (see item 7 in [room-for-improvement.md](room-for-improvement.md)).
+- **The bootstrap state is a local file.** Move it into the bucket it creates.
 - **Velero** is not needed while nothing in the cluster holds data. Add it, with EBS snapshots, the first time a stateful workload or PersistentVolume appears.
 - **A database** would bring real backups: RDS automated backups with point-in-time recovery, AWS Backup plans with cross-account copies, and restore drills of their own.
