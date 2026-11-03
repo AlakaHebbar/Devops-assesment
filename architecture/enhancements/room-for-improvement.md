@@ -11,7 +11,7 @@ Each item has three parts:
 |---|---|---|---|
 | 1 | CI | 3.1 | [A new image and deploy on every push](#1-a-new-image-and-deploy-on-every-push) |
 | 2 | CD | 3.2 | [Rollback means a rebuild](#2-rollback-means-a-rebuild) |
-| 3 | CI | 3.1, 3.3, 3.4 | [Direct pushes to main are still allowed](#3-direct-pushes-to-main-are-still-allowed) |
+| 3 | CI | 3.1, 3.3, 3.4 | [The deploy commit can't get past the main ruleset](#3-the-deploy-commit-cant-get-past-the-main-ruleset) |
 | 4 | Reliability | — | [Backup and restore is a runbook, not automation](#4-backup-and-restore-is-a-runbook-not-automation) |
 | 5 | Reliability | — | [Chaos testing is a plan, not automation](#5-chaos-testing-is-a-plan-not-automation) |
 
@@ -36,23 +36,23 @@ Each item has three parts:
 
 **Improvement:** a dedicated rollback workflow (`workflow_dispatch`, input: target SHA) that checks the image exists in ECR and commits that tag. It has no build, no flags to remember, and leaves an audit trail.
 
-## 3. Direct pushes to main are still allowed
+## 3. The deploy commit can't get past the main ruleset
 
-**Today:** part of this is handled in GitHub settings:
-- The `protect-main` ruleset blocks deleting or force-pushing `main`.
+**Today:** this is handled in GitHub settings:
+- The `protect-main` ruleset requires a pull request for every change to `main`, so a direct `git push origin main` is rejected. It also blocks deleting or force-pushing `main`.
 - The `production` environment requires a reviewer's approval and accepts deployments only from `main`. Terraform `apply` cannot run without that approval.
 
-Pushes to `main` itself are not restricted. [`update-image-tag.sh`](../../.github/scripts/update-image-tag.sh) pushes the deploy commit with `GITHUB_TOKEN`, and a "require pull request" rule would block that push, because `GITHUB_TOKEN` can't be a ruleset bypass actor.
+[`update-image-tag.sh`](../../.github/scripts/update-image-tag.sh) still pushes the deploy commit straight to `main` with `GITHUB_TOKEN`, and `GITHUB_TOKEN` can't be a ruleset bypass actor.
 
 **Risk:**
-- Anyone with write access can push to `main` without a PR. An app change deploys straight to production, with no review.
-- An infra change pushed this way still waits for approval, but the approver sees no PR plan.
+- The ruleset rejects the deploy commit, so `update-manifests` fails and new images are not deployed.
 - Admins can bypass the `production` environment's protection rules.
 
 **Improvement:**
-- Push deploy commits as a dedicated GitHub App (contents: write, minted with `actions/create-github-app-token`), and add `paths-ignore: [k8s/kustomization.yaml]` to the `push` trigger of `app-ci.yml`. App-token pushes trigger workflows, unlike `GITHUB_TOKEN`, so without it each deploy commit would build again.
-- Extend `protect-main` to require a pull request and the `gitleaks` check, with the deploy App as the only bypass actor. Alternatively, CI opens an auto-merging PR for each tag bump (3.1 allows either).
-- Add a CODEOWNERS file for `k8s/`, `infra/` and `.github/`, and require code-owner review once there is a second reviewer.
+- Push deploy commits as a dedicated GitHub App (contents: write, minted with `actions/create-github-app-token`), and make it the only bypass actor on `protect-main`.
+- Add `paths-ignore: [k8s/kustomization.yaml]` to the `push` trigger of `app-ci.yml`. App-token pushes trigger workflows, unlike `GITHUB_TOKEN`, so without it each deploy commit would build again.
+- Alternatively, CI opens an auto-merging PR for each tag bump (3.1 allows either).
+- Require the `gitleaks` check on `main`, add a CODEOWNERS file for `k8s/`, `infra/` and `.github/`, and require code-owner review once there is a second reviewer.
 - Turn off admin bypass on the `production` environment.
 
 ## 4. Backup and restore is a runbook, not automation
