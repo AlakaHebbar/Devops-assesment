@@ -1,0 +1,6 @@
+# Copy to backend.hcl and fill in from this account's infra/bootstrap outputs, then:
+#   terraform -chdir=infra/core init -reconfigure \
+#     -backend-config=../environments/uat/backend.hcl -backend-config=key=uat/core.tfstate
+bucket     = "next-bff-tfstate-222222222222-us-east-1"
+region     = "us-east-1"
+kms_key_id = "arn:aws:kms:us-east-1:222222222222:key/00000000-0000-0000-0000-000000000000"

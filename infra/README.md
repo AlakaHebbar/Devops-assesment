@@ -1,11 +1,12 @@
 # infra
 
-Terraform for the production AWS environment. See [../ARCHITECTURE.md](../ARCHITECTURE.md) for what each piece is and why.
+Terraform for the AWS environments: one stack (`core/`) applied to dev, uat and prod, each in its own account. See [../architecture/environments.md](../architecture/environments.md) for how environments work. See [../ARCHITECTURE.md](../ARCHITECTURE.md) for what each piece is and why.
 
 ```
 infra/
 ├── bootstrap/              # state bucket + KMS (local state, apply once)
-├── environments/prod/      # core: VPC, EKS, ECR, IAM, Route 53/ACM/WAF, log bucket, alarms
+├── core/                   # the one core stack: VPC, EKS, ECR, IAM, Route 53/ACM/WAF, log bucket, alarms
+├── environments/<env>/     # dev, uat, prod: example tfvars and backend config only
 ├── gitops-bootstrap/       # once, by an operator: Argo CD + root app (add-ons then come from k8s/platform)
 └── modules/
     ├── network/            # VPC, subnets, NAT per AZ, flow logs, VPC endpoints
@@ -31,14 +32,21 @@ terraform apply
 
 ## 2. Core stack
 
+Pick the environment (`dev`, `uat` or `prod`); the code is the same for all three.
+
 ```bash
-cd infra/environments/prod
-cp backend.hcl.example backend.hcl            # fill from bootstrap outputs
+ENV=prod
+cd infra/environments/$ENV
+cp backend.hcl.example backend.hcl            # fill from this account's bootstrap outputs
 cp terraform.tfvars.example terraform.tfvars  # fill in admin roles, repo, domain
-terraform init -backend-config=backend.hcl
-terraform plan -out=core.tfplan
+cd ../../core
+terraform init -reconfigure \
+  -backend-config=../environments/$ENV/backend.hcl -backend-config=key=$ENV/core.tfstate
+terraform plan -var environment=$ENV -var-file=../environments/$ENV/terraform.tfvars -out=core.tfplan
 terraform apply core.tfplan
 ```
+
+`-reconfigure` matters when you switch environments in the same checkout: it points the working directory at the other state file.
 
 If `create_hosted_zone = true`, delegate the domain to `hosted_zone_name_servers` before the ACM validation can finish.
 
@@ -55,15 +63,15 @@ If `create_hosted_zone = true`, delegate the domain to `hosted_zone_name_servers
    3. Store the private key in Secrets Manager, then delete the local files:
 
       ```bash
-      aws secretsmanager put-secret-value --secret-id prod/argocd/repo-deploy-key \
+      aws secretsmanager put-secret-value --secret-id $ENV/argocd/repo-deploy-key \
         --secret-string file://argocd-deploy-key
       ```
 
-2. **GitHub environment.** Create an environment named `production` with required reviewers. Its deployment branches should be limited to `main`.
+2. **GitHub environments.** Create one per environment: `dev`, `uat`, and `production` for prod. Give `production` required reviewers, and limit all three to the `main` branch.
 3. **GitHub variables and secrets.** Set the variables and secrets listed in [ARCHITECTURE.md](../ARCHITECTURE.md#secrets-and-ci-configuration). Most values come from:
 
    ```bash
-   terraform -chdir=infra/environments/prod output
+   terraform -chdir=infra/core output
    ```
 
 From here on, the core stack is applied by `.github/workflows/infra.yml`. Run applies locally only to break glass.
@@ -74,8 +82,10 @@ This is the only Terraform that talks to Kubernetes. Run it from a host that can
 
 ```bash
 cd infra/gitops-bootstrap
-terraform init -backend-config=../environments/prod/backend.hcl
+terraform init -reconfigure \
+  -backend-config=../environments/$ENV/backend.hcl -backend-config=key=$ENV/gitops-bootstrap.tfstate
 terraform apply \
+  -var environment=$ENV \
   -var state_bucket=<state bucket> \
   -var gitops_repo_url=git@github.com:<owner>/<repo>.git
 ```

@@ -9,13 +9,13 @@ A stateless Next.js service (`next-bff-service`) running on Amazon EKS and deliv
 
 ```
 devops-challenge/
-├── infra/                 # Terraform: bootstrap, environments/prod, gitops-bootstrap, modules
+├── infra/                 # Terraform: bootstrap, core (one stack for dev/uat/prod), environments, gitops-bootstrap, modules
 ├── application/           # Next.js app + Dockerfile
 ├── k8s/                   # Service manifests (kustomize); platform/ = Argo CD ApplicationSets
 ├── .github/workflows/     # CI: app-ci, infra, security
 ├── docker-compose.yml
 ├── .env.example
-├── architecture/          # diagrams (draw.io source + PNG), repo-structure.pdf, room-for-improvement.md
+├── architecture/          # diagrams, environments, deployment strategy, chaos plan, backup runbook, room-for-improvement
 ├── README.md
 └── ARCHITECTURE.md
 ```
@@ -71,8 +71,8 @@ push to main ─▶ app-ci: lint · build ─▶ Trivy · push ECR :<sha> ─▶
 
   For an emergency rollback without a build, see [Rollback](ARCHITECTURE.md#gitops-argo-cd).
 - **Infrastructure:**
-  - Open a PR that touches `infra/`, and the plans are posted as comments.
-  - After the merge, approve the `production` environment deployment to apply.
+  - Open a PR that touches `infra/`, and one plan per environment (dev, uat, prod) is posted as a comment.
+  - After the merge, dev and uat apply in order, then approve the `production` environment deployment to apply prod. See [architecture/environments.md](architecture/environments.md).
 - **Secrets:** none are committed. CI configuration lives in GitHub Actions variables and secrets (listed in [ARCHITECTURE.md](ARCHITECTURE.md#secrets-and-ci-configuration)). The Argo CD deploy key and app secrets live in AWS Secrets Manager.
 
 The manual ECR push above is only needed before CI is set up.

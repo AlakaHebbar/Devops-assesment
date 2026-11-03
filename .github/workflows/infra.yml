@@ -1,17 +1,32 @@
 # Terraform pipeline for infra/.
 #
+# One core stack (infra/core), applied once per environment: dev, uat, prod.
+# Each environment has its own AWS account, state file and CI roles; only the
+# configuration differs (infra/environments/<env>/*.example).
+#
 # pull request:  fmt + validate + tflint on every stack, then a plan of the core
-#                stack posted to the PR (read-only role, no lock).
-# push to main:  re-plan and apply the core stack in the `production` GitHub
-#                environment, which waits for a required reviewer.
+#                stack for every configured environment, posted to the PR
+#                (read-only role, no lock).
+# push to main:  re-plan and apply dev, then uat, then prod. Each apply runs in
+#                its GitHub environment (`dev`, `uat`, `production`); only
+#                `production` has required reviewers. A failed apply stops the
+#                environments after it.
 #
 # This pipeline only calls AWS APIs. It has no Kubernetes credentials and never
 # talks to the cluster: Argo CD deploys everything inside it from Git. The
 # one-time infra/gitops-bootstrap stack is applied by an operator, not by CI.
-# Configuration comes from the CI secret store, never from the repository:
-#   vars:    AWS_REGION, TF_STATE_BUCKET, TF_STATE_KMS_KEY_ARN,
-#            AWS_TERRAFORM_PLAN_ROLE_ARN, AWS_TERRAFORM_APPLY_ROLE_ARN
-#   secrets: PROD_TFVARS (contents of infra/environments/prod/terraform.tfvars)
+#
+# Configuration comes from the CI secret store, never from the repository.
+# <ENV> is DEV, UAT or PROD; an environment is skipped until its tfvars secret
+# exists.
+#   vars:    AWS_REGION,
+#            <ENV>_TF_STATE_BUCKET, <ENV>_TF_STATE_KMS_KEY_ARN,
+#            <ENV>_TERRAFORM_PLAN_ROLE_ARN, <ENV>_TERRAFORM_APPLY_ROLE_ARN
+#   secrets: <ENV>_TFVARS (contents of infra/environments/<env>/terraform.tfvars)
+#
+# The values are repository-level, not GitHub-environment-level, because PR
+# plans can't run in a GitHub environment: that changes the OIDC subject the
+# plan role trusts, and production's reviewers would hold every PR plan.
 name: infra
 
 on:
@@ -53,7 +68,7 @@ jobs:
 
       - name: Validate
         run: |
-          for stack in infra/bootstrap infra/environments/prod infra/gitops-bootstrap; do
+          for stack in infra/bootstrap infra/core infra/gitops-bootstrap; do
             echo "::group::$stack"
             terraform -chdir="$stack" init -backend=false -lockfile=readonly
             terraform -chdir="$stack" validate
@@ -71,18 +86,59 @@ jobs:
           tflint --init --config "$PWD/infra/.tflint.hcl"
           tflint --recursive --chdir infra --config "$PWD/infra/.tflint.hcl"
 
-  plan-core:
+  # Builds the plan/apply matrix from the environments that are configured, in
+  # promotion order. Secrets can't be read in a job-level `if`, so this is a job.
+  environments:
     needs: checks
-    # Forks get no OIDC token and must not reach the plan role.
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      any: ${{ steps.pick.outputs.any }}
+    steps:
+      - id: pick
+        env:
+          DEV_TFVARS: ${{ secrets.DEV_TFVARS }}
+          UAT_TFVARS: ${{ secrets.UAT_TFVARS }}
+          PROD_TFVARS: ${{ secrets.PROD_TFVARS }}
+        run: |
+          include='[]'
+          for env in dev uat prod; do
+            prefix=$(tr a-z A-Z <<<"$env")
+            secret="${prefix}_TFVARS"
+            if [[ -z "${!secret}" ]]; then
+              echo "::notice::Skipping ${env}: no ${secret} secret."
+              continue
+            fi
+            # prod keeps its original GitHub environment name (see infra/core/main.tf).
+            github_environment=$([[ $env == prod ]] && echo production || echo "$env")
+            include=$(jq -c --arg env "$env" --arg prefix "$prefix" --arg gh "$github_environment" \
+              '. + [{env: $env, prefix: $prefix, github_environment: $gh}]' <<<"$include")
+          done
+          echo "matrix={\"include\":${include}}" >> "$GITHUB_OUTPUT"
+          echo "any=$([[ $include != '[]' ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  plan:
+    needs: environments
+    # Forks get no OIDC token and must not reach the plan role.
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && needs.environments.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.environments.outputs.matrix) }}
     permissions:
       contents: read
       id-token: write
       pull-requests: write
+    env:
+      # Passed with -var, which wins over anything set in the tfvars secret, so
+      # the environment always matches the state key.
+      ENVIRONMENT: ${{ matrix.env }}
     defaults:
       run:
-        working-directory: infra/environments/prod
+        working-directory: infra/core
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,53 +151,67 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+          role-to-assume: ${{ vars[format('{0}_TERRAFORM_PLAN_ROLE_ARN', matrix.prefix)] }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Configuration from the secret store
         env:
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
-          PROD_TFVARS: ${{ secrets.PROD_TFVARS }}
+          TF_STATE_BUCKET: ${{ vars[format('{0}_TF_STATE_BUCKET', matrix.prefix)] }}
+          TF_STATE_KMS_KEY_ARN: ${{ vars[format('{0}_TF_STATE_KMS_KEY_ARN', matrix.prefix)] }}
+          TFVARS: ${{ secrets[format('{0}_TFVARS', matrix.prefix)] }}
         run: |
-          printf 'bucket = "%s"\nregion = "%s"\nkms_key_id = "%s"\n' \
-            "$TF_STATE_BUCKET" "$AWS_REGION" "$TF_STATE_KMS_KEY_ARN" > backend.hcl
-          printf '%s\n' "$PROD_TFVARS" > terraform.tfvars
+          printf 'bucket = "%s"\nregion = "%s"\nkms_key_id = "%s"\nkey = "%s/core.tfstate"\n' \
+            "$TF_STATE_BUCKET" "$AWS_REGION" "$TF_STATE_KMS_KEY_ARN" "$ENVIRONMENT" > backend.hcl
+          printf '%s\n' "$TFVARS" > terraform.tfvars
 
       - run: terraform init -backend-config=backend.hcl -lockfile=readonly
 
       # The plan role is read-only and cannot write the state lock file.
       - id: plan
         run: |
-          terraform plan -lock=false -no-color -out=tfplan
+          terraform plan -lock=false -no-color -var "environment=$ENVIRONMENT" -out=tfplan
           terraform show -no-color tfplan > plan.txt
 
       - name: Comment plan
         if: always() && steps.plan.outcome != 'skipped'
-        run: ../../../.github/scripts/plan-comment.sh core plan.txt "${{ steps.plan.outcome }}" > comment.md
+        run: ../../.github/scripts/plan-comment.sh "core (${{ matrix.env }})" plan.txt "${{ steps.plan.outcome }}" > comment.md
 
       - uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         if: always() && steps.plan.outcome != 'skipped'
         with:
-          header: terraform-plan-core
-          path: infra/environments/prod/comment.md
+          header: terraform-plan-core-${{ matrix.env }}
+          path: infra/core/comment.md
 
   apply:
-    needs: checks
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    # Required reviewers on this environment are the manual approval gate; the
-    # apply role trusts only tokens issued to jobs in this environment.
-    environment: production
+    needs: environments
+    if: >-
+      github.event_name != 'pull_request'
+      && github.ref == 'refs/heads/main'
+      && needs.environments.outputs.any == 'true'
+    # One environment at a time, in matrix order (dev, uat, prod). fail-fast
+    # cancels the later environments when one fails, so a change that breaks
+    # dev never reaches prod.
+    strategy:
+      max-parallel: 1
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.environments.outputs.matrix) }}
+    # The apply role trusts only tokens issued to jobs in this GitHub
+    # environment. On `production`, required reviewers are the manual gate.
+    environment: ${{ matrix.github_environment }}
     runs-on: ubuntu-24.04
     concurrency:
-      group: infra-prod-apply
+      group: infra-${{ matrix.env }}-apply
       cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
+    env:
+      # Passed with -var, which wins over anything set in the tfvars secret, so
+      # the environment always matches the state key.
+      ENVIRONMENT: ${{ matrix.env }}
     defaults:
       run:
-        working-directory: infra/environments/prod
+        working-directory: infra/core
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -154,24 +224,24 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
+          role-to-assume: ${{ vars[format('{0}_TERRAFORM_APPLY_ROLE_ARN', matrix.prefix)] }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 7200
 
       - name: Configuration from the secret store
         env:
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          TF_STATE_KMS_KEY_ARN: ${{ vars.TF_STATE_KMS_KEY_ARN }}
-          PROD_TFVARS: ${{ secrets.PROD_TFVARS }}
+          TF_STATE_BUCKET: ${{ vars[format('{0}_TF_STATE_BUCKET', matrix.prefix)] }}
+          TF_STATE_KMS_KEY_ARN: ${{ vars[format('{0}_TF_STATE_KMS_KEY_ARN', matrix.prefix)] }}
+          TFVARS: ${{ secrets[format('{0}_TFVARS', matrix.prefix)] }}
         run: |
-          printf 'bucket = "%s"\nregion = "%s"\nkms_key_id = "%s"\n' \
-            "$TF_STATE_BUCKET" "$AWS_REGION" "$TF_STATE_KMS_KEY_ARN" > backend.hcl
-          printf '%s\n' "$PROD_TFVARS" > terraform.tfvars
+          printf 'bucket = "%s"\nregion = "%s"\nkms_key_id = "%s"\nkey = "%s/core.tfstate"\n' \
+            "$TF_STATE_BUCKET" "$AWS_REGION" "$TF_STATE_KMS_KEY_ARN" "$ENVIRONMENT" > backend.hcl
+          printf '%s\n' "$TFVARS" > terraform.tfvars
 
       - run: terraform init -backend-config=backend.hcl -lockfile=readonly
 
       # The reviewer saw the PR plan; re-plan against current state and apply that.
       - name: Apply core
         run: |
-          terraform plan -out=tfplan
+          terraform plan -var "environment=$ENVIRONMENT" -out=tfplan
           terraform apply tfplan

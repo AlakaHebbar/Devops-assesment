@@ -65,6 +65,7 @@ jobs:
     permissions:
       contents: read
       id-token: write # OIDC -> AWS
+      security-events: write # Trivy report -> Security tab
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
@@ -98,6 +99,7 @@ jobs:
 
       # Load locally first so the scan gates the push.
       - name: Build
+        id: build
         if: steps.meta.outputs.exists == 'false'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -119,6 +121,27 @@ jobs:
           severity: CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
+      # Wider than the gate (HIGH too) and runs even when the gate fails, so
+      # the findings behind a blocked push are visible under Security → Code
+      # scanning. Only CRITICAL blocks the push.
+      - name: Scan report
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: "0"
+
+      - name: Upload scan report
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: github/codeql-action/upload-sarif@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-image
 
       - name: Push
         if: steps.meta.outputs.exists == 'false'

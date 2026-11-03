@@ -39,7 +39,7 @@ updates:
   - package-ecosystem: terraform
     directories:
       - /infra/bootstrap
-      - /infra/environments/prod
+      - /infra/core
       - /infra/gitops-bootstrap
     schedule:
       interval: monthly

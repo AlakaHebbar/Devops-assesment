@@ -1,9 +1,13 @@
 locals {
   name = "${var.project}-${var.environment}"
+
+  # GitHub environment whose jobs may assume this environment's apply role.
+  # prod keeps its original name; infra.yml uses the same mapping.
+  github_environment = var.environment == "prod" ? "production" : var.environment
 }
 
 module "network" {
-  source = "../../modules/network"
+  source = "../modules/network"
 
   name   = local.name
   region = var.region
@@ -12,7 +16,7 @@ module "network" {
 }
 
 module "eks" {
-  source = "../../modules/eks"
+  source = "../modules/eks"
 
   name                         = local.name
   kubernetes_version           = var.kubernetes_version
@@ -29,13 +33,13 @@ module "eks" {
 }
 
 module "ecr" {
-  source = "../../modules/ecr"
+  source = "../modules/ecr"
 
   name = var.service_name
 }
 
 module "ci_identity" {
-  source = "../../modules/ci-identity"
+  source = "../modules/ci-identity"
 
   name                       = local.name
   github_repository          = var.github_repository
@@ -46,19 +50,21 @@ module "ci_identity" {
 }
 
 module "ci_terraform" {
-  source = "../../modules/ci-terraform"
+  source = "../modules/ci-terraform"
 
   name              = local.name
   github_repository = var.github_repository
   oidc_provider_arn = module.ci_identity.oidc_provider_arn
+  apply_environment = local.github_environment
   state_bucket_arn  = "arn:aws:s3:::${var.state_bucket_name}"
+  plan_state_key    = "${var.environment}/core.tfstate"
   state_kms_key_arn = var.state_kms_key_arn
 }
 
 # Read-only GitHub deploy key Argo CD uses to pull this (private) repository.
 # Terraform creates only the empty secret; an operator stores the private key,
 # and infra/gitops-bootstrap hands it to Argo CD:
-#   aws secretsmanager put-secret-value --secret-id prod/argocd/repo-deploy-key \
+#   aws secretsmanager put-secret-value --secret-id <env>/argocd/repo-deploy-key \
 #     --secret-string file://argocd-deploy-key
 resource "aws_secretsmanager_secret" "gitops_repo_key" {
   name                    = "${var.environment}/argocd/repo-deploy-key"
@@ -67,7 +73,7 @@ resource "aws_secretsmanager_secret" "gitops_repo_key" {
 }
 
 module "log_archive" {
-  source = "../../modules/log-archive"
+  source = "../modules/log-archive"
 
   name           = local.name
   region         = var.region
@@ -75,7 +81,7 @@ module "log_archive" {
 }
 
 module "edge" {
-  source = "../../modules/edge"
+  source = "../modules/edge"
 
   name               = local.name
   hosted_zone_name   = var.hosted_zone_name
@@ -84,7 +90,7 @@ module "edge" {
 }
 
 module "workload_identity" {
-  source = "../../modules/workload-identity"
+  source = "../modules/workload-identity"
 
   cluster_name        = module.eks.cluster_name
   region              = var.region
@@ -97,7 +103,7 @@ module "workload_identity" {
 }
 
 module "observability" {
-  source = "../../modules/observability"
+  source = "../modules/observability"
 
   name              = local.name
   cluster_name      = module.eks.cluster_name

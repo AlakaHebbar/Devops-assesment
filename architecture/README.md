@@ -4,6 +4,10 @@
 
 - **Narrative and rationale:** [../ARCHITECTURE.md](../ARCHITECTURE.md).
 - **Known gaps and trade-offs:** [room-for-improvement.md](room-for-improvement.md).
+- **Environments (dev, uat, prod from one stack):** [environments.md](environments.md).
+- **Deployment strategy:** [deployment-strategy.md](deployment-strategy.md).
+- **Chaos test plan:** [chaos-test-plan.md](chaos-test-plan.md).
+- **Backup and restore runbook:** [backup-and-restore.md](backup-and-restore.md).
 - **Repository layout and why it's split this way:** [repo-structure.pdf](repo-structure.pdf).
 
 | Diagram | Answers | Source | Image |
@@ -16,7 +20,7 @@ To change a diagram, edit the `.drawio` source in [draw.io](https://app.diagrams
 
 ## Scope
 
-One AWS production account in one region, `us-east-1` (an assumption; see [Region and network](../ARCHITECTURE.md#region-and-network-modulesnetwork)). A VPC (`10.20.0.0/16`) across three Availability Zones, with one public `/24` and one private `/19` subnet in each, holds a private EKS cluster that runs `next-bff-service`. GitHub hosts the code and the pipelines. Every box in the diagram is defined in this repository:
+This page and the diagrams show the production environment: one AWS account in one region, `us-east-1` (an assumption; see [Region and network](../ARCHITECTURE.md#region-and-network-modulesnetwork)). A VPC (`10.20.0.0/16`) across three Availability Zones, with one public `/24` and one private `/19` subnet in each, holds a private EKS cluster that runs `next-bff-service`. GitHub hosts the code and the pipelines. Every box in the diagram is defined in this repository:
 - **AWS resources:** `infra/`
 - **Workload manifests:** `k8s/`
 - **Argo CD ApplicationSets:** `k8s/platform/`
@@ -47,9 +51,9 @@ CI never holds cluster credentials and never runs `kubectl`.
 
 1. **On a pull request** that touches `infra/`, the infra workflow:
    - runs `terraform fmt`, `validate` and tflint on every stack
-   - plans the core stack with the read-only `ci-terraform-plan` role
-   - posts the plan as a PR comment
-2. **After a merge to `main`**, the `apply` job waits in the `production` GitHub environment for a required reviewer. Only jobs in that environment can assume `ci-terraform-apply`. It re-plans and applies the core stack.
+   - plans the core stack for each environment (dev, uat, prod) with that environment's read-only `ci-terraform-plan` role
+   - posts each plan as a PR comment
+2. **After a merge to `main`**, the `apply` job runs once per environment, in order. dev and uat apply straight away; prod waits in the `production` GitHub environment for a required reviewer. Only jobs in an environment's GitHub environment can assume its `ci-terraform-apply` role. Each job re-plans and applies the core stack.
 3. **What it touches:** only the core stack, through AWS APIs. No CI role has an EKS access entry, so the pipeline can't reach the Kubernetes API.
 
 ### 4. Cluster contents: bootstrap once, then Git
@@ -86,4 +90,4 @@ The bucket is private, KMS-encrypted and versioned, with lifecycle tiering. The 
 - **Zones:** three AZs, each with its own subnets and NAT gateway.
 - **Service:** at least 3 replicas spread across zones and hosts, HPA up to 12, PDB `minAvailable: 2`, and rolling updates with `maxUnavailable: 0`.
 - **Platform:** the controllers run 2 replicas each, all managed by Argo CD. Argo CD runs in HA mode: Redis HA, plus two replicas of the server, repo-server and ApplicationSet controller.
-- **Recovery:** Terraform state is versioned and every deploy is a Git commit, so the cluster can be rebuilt from Git plus state.
+- **Recovery:** Terraform state is versioned and every deploy is a Git commit, so the cluster can be rebuilt from Git plus state. Procedures: [backup-and-restore.md](backup-and-restore.md).
