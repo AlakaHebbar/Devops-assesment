@@ -8,13 +8,15 @@
 - **Chaos test plan:** [chaos-test-plan.md](enhancements/chaos-test-plan.md).
 - **Repository layout and why it's split this way:** [repo-structure.pdf](repo-structure.pdf).
 
-| Diagram | Answers | Source | Image |
-|---|---|---|---|
-| Infrastructure | Where it runs: region, VPC and subnets per AZ, EKS, edge, IAM roles | [infrastructure.drawio](infrastructure.drawio) | [png](infrastructure.png) |
-| Kubernetes components | What runs in the cluster: namespaces, the service's resources, add-ons, Argo CD | [k8s-components.drawio](k8s-components.drawio) | [png](k8s-components.png) |
-| Application pipeline | How a change ships: PR → CI → ECR → Argo CD → smoke test → rollback | [application-pipeline-activity.drawio](application-pipeline-activity.drawio) | [png](application-pipeline-activity.png) |
+| Diagram | Answers | Image |
+|---|---|---|
+| Infrastructure | Where it runs: region, VPC and subnets per AZ, EKS, edge, IAM roles | [infrastructure.png](infrastructure.png) |
+| Kubernetes components | What runs in the cluster: namespaces, the service's resources, add-ons, Argo CD | [k8s-components.png](k8s-components.png) |
+| Application pipeline | How a change ships: PR → CI → ECR → Argo CD → smoke test → rollback | [application-pipeline-activity.png](application-pipeline-activity.png) |
 
-To change a diagram, edit the `.drawio` source in [draw.io](https://app.diagrams.net) (or the desktop app), then export it as PNG over the image with the same name. Commit both together.
+To change a diagram:
+- **Kubernetes components, application pipeline:** the PNG embeds its draw.io source. Open it in [draw.io](https://app.diagrams.net), edit, and export as PNG over the same file with **Include a copy of my diagram** ticked.
+- **Infrastructure:** the PNG has no embedded source. Restore the last one from Git with `git show ad388bd:architecture/infrastructure.drawio > infrastructure.drawio`, edit it, and export with **Include a copy of my diagram** ticked so the next edit doesn't need this step.
 
 ## Scope
 
