@@ -1,28 +1,22 @@
 # Architecture design: Next.js on Amazon EKS with GitOps
 
-![Architecture diagram](architecture.svg)
+![Infrastructure diagram](infrastructure.png)
 
-- **Source:** [architecture.mmd](architecture.mmd) (Mermaid). The exported images [architecture.svg](architecture.svg) and [architecture.png](architecture.png) are generated from it.
 - **Narrative and rationale:** [../ARCHITECTURE.md](../ARCHITECTURE.md).
 - **Known gaps and trade-offs:** [room-for-improvement.md](room-for-improvement.md).
+- **Repository layout and why it's split this way:** [repo-structure.pdf](repo-structure.pdf).
 
-GitOps diagrams (embedded in [ARCHITECTURE.md](../ARCHITECTURE.md#cicd-and-gitops)):
+| Diagram | Answers | Source | Image |
+|---|---|---|---|
+| Infrastructure | Where it runs: region, VPC and subnets per AZ, EKS, edge, IAM roles | [infrastructure.drawio](infrastructure.drawio) | [png](infrastructure.png) |
+| Kubernetes components | What runs in the cluster: namespaces, the service's resources, add-ons, Argo CD | [k8s-components.drawio](k8s-components.drawio) | [png](k8s-components.png) |
+| Application pipeline | How a change ships: PR → CI → ECR → Argo CD → smoke test → rollback | [application-pipeline-activity.drawio](application-pipeline-activity.drawio) | [png](application-pipeline-activity.png) |
 
-| Diagram | Source | Images |
-|---|---|---|
-| Components and the numbered deploy path, plus self-heal and rollback | [gitops-flow.mmd](gitops-flow.mmd) | [svg](gitops-flow.svg) · [png](gitops-flow.png) |
-| Deploy and rollback as a timeline | [gitops-deploy-sequence.mmd](gitops-deploy-sequence.mmd) | [svg](gitops-deploy-sequence.svg) · [png](gitops-deploy-sequence.png) |
-
-Regenerate the images after editing a source (same commands, with the file name changed):
-
-```bash
-npx -y @mermaid-js/mermaid-cli -i architecture/architecture.mmd -o architecture/architecture.svg -b white
-npx -y @mermaid-js/mermaid-cli -i architecture/architecture.mmd -o architecture/architecture.png -b white -s 4
-```
+To change a diagram, edit the `.drawio` source in [draw.io](https://app.diagrams.net) (or the desktop app), then export it as PNG over the image with the same name. Commit both together.
 
 ## Scope
 
-One AWS production account and region. A VPC across three Availability Zones holds a private EKS cluster that runs `next-bff-service`. GitHub hosts the code and the pipelines. Every box in the diagram is defined in this repository:
+One AWS production account in one region, `us-east-1` (an assumption; see [Region and network](../ARCHITECTURE.md#region-and-network-modulesnetwork)). A VPC (`10.20.0.0/16`) across three Availability Zones, with one public `/24` and one private `/19` subnet in each, holds a private EKS cluster that runs `next-bff-service`. GitHub hosts the code and the pipelines. Every box in the diagram is defined in this repository:
 - **AWS resources:** `infra/`
 - **Workload manifests:** `k8s/`
 - **Argo CD ApplicationSets:** `k8s/platform/`
