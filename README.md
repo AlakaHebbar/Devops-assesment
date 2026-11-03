@@ -15,7 +15,7 @@ devops-challenge/
 ├── .github/workflows/     # CI: app-ci, infra, security
 ├── docker-compose.yml
 ├── .env.example
-├── architecture/          # design document: Mermaid source + exported SVG/PNG
+├── architecture/          # diagrams (draw.io source + PNG), repo-structure.pdf, room-for-improvement.md
 ├── README.md
 └── ARCHITECTURE.md
 ```

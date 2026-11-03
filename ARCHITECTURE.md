@@ -7,9 +7,14 @@ Delivery is GitOps:
 - **Argo CD** is the only thing that changes the cluster. Terraform installs it once (an operator-run bootstrap). From then on Argo CD deploys the service, the platform add-ons and itself from Git.
 - **Infrastructure changes** are planned on pull requests and applied only after a merge and a reviewer's approval. That pipeline only calls AWS APIs; no CI job has Kubernetes credentials.
 
-![Architecture diagram](architecture/architecture.svg)
+![Infrastructure diagram: VPC across three AZs in us-east-1, EKS, edge and IAM roles](architecture/infrastructure.png)
 
-The diagram source, the request, deploy and log flows, and the trust boundaries are in [architecture/README.md](architecture/README.md). The Mermaid source is [architecture/architecture.mmd](architecture/architecture.mmd).
+Three diagrams, one per question:
+- **Where it runs:** [infrastructure.png](architecture/infrastructure.png) (above).
+- **What runs in the cluster:** [k8s-components.png](architecture/k8s-components.png), in [Application runtime](#application-runtime-k8s).
+- **How a change ships:** [application-pipeline-activity.png](architecture/application-pipeline-activity.png), in [CI/CD and GitOps](#cicd-and-gitops).
+
+The request, deploy and log flows, the trust boundaries and the diagram sources are in [architecture/README.md](architecture/README.md).
 
 The service is stateless, so there is no database.
 
@@ -47,11 +52,47 @@ Step-by-step commands are in [infra/README.md](infra/README.md).
 
 ## What was created and why
 
-### Network: [`modules/network`](infra/modules/network)
+### Region and network: [`modules/network`](infra/modules/network)
 
-- **VPC across 3 AZs** (`10.20.0.0/16`): `/24` public subnets hold only the ALB and NAT gateways. `/19` private subnets hold nodes and pods, sized for VPC CNI pod IPs with prefix delegation.
-- **One NAT gateway per AZ**, each private subnet routed to the NAT in its own AZ, so losing one AZ doesn't cut egress for the other two.
-- **VPC endpoints**: a gateway endpoint for S3, plus interface endpoints for ECR API/DKR, STS, CloudWatch Logs, EKS Auth (Pod Identity) and Secrets Manager. Image pulls, log uploads and credential exchange stay on the AWS network and don't depend on NAT.
+#### Region: `us-east-1` (assumed)
+
+Everything runs in one region, `us-east-1` (N. Virginia), across the AZs `us-east-1a`, `us-east-1b` and `us-east-1c`. This is an assumption, not a requirement, and nothing in the design depends on it:
+- The WAF is attached to the regional ALB, not to CloudFront, so it doesn't need `us-east-1`.
+- The ACM certificate is created in the same region as the ALB.
+
+To use another region, change it everywhere it's set. The AZ names must belong to the new region:
+
+| Where | Setting |
+|---|---|
+| [`infra/bootstrap/variables.tf`](infra/bootstrap/variables.tf) | `region` (state bucket) |
+| [`infra/environments/prod/variables.tf`](infra/environments/prod/variables.tf) / `terraform.tfvars` | `region`, `azs` |
+| `infra/environments/prod/backend.hcl` | `region` of the state bucket |
+| [`infra/gitops-bootstrap/variables.tf`](infra/gitops-bootstrap/variables.tf) | `region` |
+| GitHub Actions variable | `AWS_REGION` |
+
+AZ names map to different physical zones in each AWS account. That doesn't matter inside one account. If you ever need to line up zones with another account, use AZ IDs (for example `use1-az1`).
+
+#### Subnets
+
+The VPC is `10.20.0.0/16` (`vpc_cidr`). It's a private range chosen so it's unlikely to overlap office, VPN or other VPC networks you may connect to later. Subnets are not listed by hand: the module derives them from the VPC CIDR with `cidrsubnet()` ([`main.tf`](infra/modules/network/main.tf)), giving one private and one public subnet per AZ:
+
+| AZ | Private: nodes, pods, VPC endpoints | Public: ALB, NAT gateway |
+|---|---|---|
+| `us-east-1a` | `10.20.0.0/19` | `10.20.96.0/24` |
+| `us-east-1b` | `10.20.32.0/19` | `10.20.97.0/24` |
+| `us-east-1c` | `10.20.64.0/19` | `10.20.98.0/24` |
+| Free (not allocated) | `10.20.99.0` – `10.20.127.255` and `10.20.128.0/17` | — |
+
+- **Private, `/19`** (`cidrsubnet(vpc_cidr, 3, i)`): 8,187 usable addresses each, since AWS reserves 5 per subnet. Pods get VPC IPs from the VPC CNI. With prefix delegation each node takes `/28` blocks (16 addresses), so the subnets are sized for pods, node scaling and the extra pods during rolling updates, not just for nodes.
+- **Public, `/24`** (`cidrsubnet(vpc_cidr, 8, 96 + i)`): 251 usable addresses each. They hold only the ALB and NAT gateway network interfaces. The ALB needs at least a `/27` with 8 free addresses per subnet.
+- **Room to grow:** about half the VPC is unallocated, for extra tiers later (for example a database subnet group).
+- **At most 3 AZs.** The module requires at least 2 AZs but doesn't check for a maximum. A 4th AZ would get the private subnet `10.20.96.0/19`, which overlaps the public `/24`s, so `terraform apply` fails with a CIDR conflict when it creates that subnet. Allowing more AZs would mean a new layout, which changes the CIDRs of existing subnets and so replaces them and the cluster. Three AZs is the normal production setup, so the layout stays as it is.
+- **The NetworkPolicy uses the VPC CIDR.** The service's Argo CD ApplicationSet patches in the real value from the cluster Secret (see [Application runtime](#application-runtime-k8s)), so changing `vpc_cidr` needs no manifest change.
+
+#### Routing and endpoints
+
+- **One NAT gateway per AZ**, each private subnet routed to the NAT in its own AZ, so losing one AZ doesn't cut egress for the other two. Public subnets share one route table to the internet gateway.
+- **VPC endpoints**: a gateway endpoint for S3 on the private route tables, plus interface endpoints for ECR API/DKR, STS, CloudWatch Logs, EKS Auth (Pod Identity) and Secrets Manager in the private subnets. The endpoints' security group allows HTTPS only, from the VPC CIDR. Image pulls, log uploads and credential exchange stay on the AWS network and don't depend on NAT.
 - **VPC flow logs** go to CloudWatch with 90-day retention. The **default security group has all its rules removed** so nothing can use it by accident.
 - Subnets are tagged `kubernetes.io/role/elb` / `internal-elb` so the Load Balancer Controller places the ALB correctly.
 
@@ -101,6 +142,8 @@ A KMS-encrypted SNS alerts topic (with email subscriptions) and CloudWatch alarm
 
 ### Application runtime: [`k8s/`](k8s)
 
+![Kubernetes components: namespaces, the service's resources, add-ons and Argo CD](architecture/k8s-components.png)
+
 Environment values are kept out of the manifests:
 - **The image** is the logical name `next-bff-service`. [`kustomization.yaml`](k8s/kustomization.yaml) maps it to the ECR repository and the commit-SHA tag that CI writes.
   - That committed line is the deploy record, so it does contain the real ECR URL, account ID included.
@@ -118,11 +161,13 @@ A 3-stage build (deps → build → runner) using Next.js `standalone` output, s
 
 CI only builds and changes Git. Argo CD deploys whatever is in Git to the cluster.
 
-![GitOps flow: CI changes Git, Argo CD changes the cluster](architecture/gitops-flow.svg)
+![Application pipeline: PR checks, build and scan, push to ECR, Argo CD rollout, smoke test, and revert on failure](architecture/application-pipeline-activity.png)
 
-The numbers follow one deploy. Dotted lines show self-heal (a manual change is reverted) and rollback (a revert commit). The same deploy as a timeline, including rollback:
-
-![Deploy and rollback sequence](architecture/gitops-deploy-sequence.svg)
+The diagram follows one change from pull request to production:
+1. PR checks run.
+2. After the merge, CI builds and scans the image, pushes it to ECR and commits the new tag.
+3. Argo CD rolls the new tag out and the smoke test checks it.
+4. If the pods aren't healthy or the smoke test fails, the fix is to revert the bad commit, which runs the pipeline again.
 
 **No pipeline can reach the cluster:**
 - No workflow runs `kubectl`, Helm or a Kubernetes provider.
@@ -235,7 +280,7 @@ Role ARNs are not secrets, but keeping them in variables keeps account IDs out o
 
 Known gaps against the requirements, and trade-offs of following them exactly, are in [architecture/room-for-improvement.md](architecture/room-for-improvement.md).
 
-- **Region / account**: `us-east-1` is the default. Run production in a dedicated account and keep non-production in separate accounts with their own `environments/<env>` directory.
+- **Region / account**: one region, `us-east-1`, is assumed (see [Region](#region-us-east-1-assumed) for how to change it), with no multi-region failover. Run production in a dedicated account and keep non-production in separate accounts with their own `environments/<env>` directory.
 - **Reaching the private API**: only humans need it, for the one-time `infra/gitops-bootstrap` and for `kubectl` debugging. They run from inside the VPC (VPN or SSM port-forward). Alternatively, set `eks_endpoint_public_access` to an office/VPN CIDR.
 - **Node autoscaling**: the node group has fixed min/max values. Add Karpenter or Cluster Autoscaler (with its own Pod Identity role) before relying on the HPA ceiling.
 - **ALB alarms and access logs**: the ALB is created by the controller, so 5xx/latency alarms and ALB access logs (these need an SSE-S3 bucket) are added once its name is known.
