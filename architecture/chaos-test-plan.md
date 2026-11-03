@@ -4,12 +4,12 @@
 
 ## Rules of engagement
 
-- **Where:** uat first, which has prod's shape (3 AZs, 3 nodes). Run in prod only once an experiment has passed in uat, inside an announced window, with someone watching.
+- **Where:** there is only one environment, production. Run each experiment in an announced low-traffic window, with someone watching, starting with the least disruptive ones (1, 3, 8). Experiment 2 (kill all pods) causes a short outage by design, so run it only with sign-off. A production-shaped test environment would be the safer place to try them first.
 - **One experiment at a time.** Note the start and end times so the alarms and logs can be matched afterwards.
 - **Steady state, measured the whole time.** In a second terminal, send traffic and count failures:
 
   ```bash
-  URL=https://app.uat.example.com/api/health
+  URL=https://app.example.com/api/health
   while true; do
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$URL")
     echo "$(date +%T) $code"
@@ -58,8 +58,8 @@
    ```
 
    For a harsher test, also cordon and drain every node in that AZ.
-6. **CPU stress:** load the site with `hey -z 5m -c 100 https://app.uat.example.com/`, or run the FIS action `aws:eks:pod-cpu-stress`. Watch `kubectl -n next-bff get hpa -w`.
-7. **Bad release:** in uat, commit an image tag that doesn't exist in ECR. The pod hits `ImagePullBackOff`. Revert the commit afterwards.
+6. **CPU stress:** load the site with `hey -z 5m -c 100 https://app.example.com/`, or run the FIS action `aws:eks:pod-cpu-stress`. Watch `kubectl -n next-bff get hpa -w`.
+7. **Bad release:** in the test window, commit an image tag that doesn't exist in ECR. The pod hits `ImagePullBackOff`. Revert the commit afterwards.
 8. **Delete by hand:** `kubectl -n next-bff delete service next-bff-service`, then watch Argo CD recreate it.
 9. **Stop Argo CD:** `kubectl -n argocd scale deploy --all --replicas=0`, then `kubectl -n argocd scale statefulset --all --replicas=0`. Restore by re-syncing the `argo-cd` app, or by scaling back up.
 10. **Kill CoreDNS:** `kubectl -n kube-system delete pod -l k8s-app=kube-dns`
@@ -72,6 +72,6 @@
 
 ## Automating it later
 
-- **AWS FIS experiment templates** in Terraform (a `chaos` module), with a CloudWatch alarm as the stop condition, run against uat on a schedule.
+- **AWS FIS experiment templates** in Terraform (a `chaos` module), with a CloudWatch alarm as the stop condition, run on a schedule.
 - **In-cluster tools:** Chaos Mesh or LitmusChaos, installed by an ApplicationSet. These are more work to run safely, so they're worth it only once the manual plan passes.
-- **Record results** in a table per run: date, environment, experiment, pass or fail, time to recover, follow-ups.
+- **Record results** in a table per run: date, experiment, pass or fail, time to recover, follow-ups.

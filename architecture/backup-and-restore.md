@@ -17,16 +17,16 @@ The service is stateless: no database, no volumes, no user uploads. So "backup" 
 
 **Targets:**
 - **RPO (data lost):** zero for config and code, since it's all in Git. Up to the Fluent Bit buffer for logs, which is minutes.
-- **RTO (time to recover):** about 1 hour to rebuild a whole environment, mostly EKS cluster creation.
+- **RTO (time to recover):** about 1 hour to rebuild the whole platform, mostly EKS cluster creation.
 
-All commands below assume a shell in the right account with an admin role, and `ENV` set to `dev`, `uat` or `prod`.
+All commands below assume a shell in the production account with an admin role, `STATE_BUCKET` set to the state bucket and `LOG_BUCKET` to the log bucket.
 
 ## Scheduled checks
 
 | When | Check |
 |---|---|
-| Monthly | Restore drill: scenario 2 in uat (restore a state version and confirm `terraform plan` shows no changes). |
-| Quarterly | Full rebuild drill: scenario 6 in dev. Record how long it took. |
+| Monthly | Restore drill: download an older state version (scenario 2, steps 2–3) and check it with `jq`, without pushing it. |
+| Yearly, or before a big change | Full rebuild drill (scenario 6) in a throwaway account. Record how long it took. |
 | On every change to `infra/bootstrap` | Copy its local state into the team's password manager or a separate secure bucket. |
 
 ## Scenarios
@@ -42,14 +42,14 @@ Covered by the deploy flow: `git revert <bad commit>` and push. See [Rollback in
 
    ```bash
    aws s3api list-object-versions --bucket "$STATE_BUCKET" \
-     --prefix "$ENV/core.tfstate" \
+     --prefix "prod/core.tfstate" \
      --query 'Versions[].{id:VersionId,at:LastModified,latest:IsLatest}' --output table
    ```
 
 3. Download the last good version and inspect it:
 
    ```bash
-   aws s3api get-object --bucket "$STATE_BUCKET" --key "$ENV/core.tfstate" \
+   aws s3api get-object --bucket "$STATE_BUCKET" --key "prod/core.tfstate" \
      --version-id <good-version-id> good.tfstate
    jq '.serial, .lineage, (.resources | length)' good.tfstate
    ```
@@ -57,9 +57,8 @@ Covered by the deploy flow: `git revert <bad commit>` and push. See [Rollback in
 4. Push it back as the current state. `push` checks the lineage and refuses a lower serial unless forced, so read the plan carefully first:
 
    ```bash
-   terraform -chdir=infra/core init -reconfigure \
-     -backend-config=../environments/$ENV/backend.hcl -backend-config=key=$ENV/core.tfstate
-   terraform -chdir=infra/core state push -force ../../good.tfstate
+   terraform -chdir=infra/environments/prod init -backend-config=backend.hcl
+   terraform -chdir=infra/environments/prod state push -force ../../../good.tfstate
    ```
 
 5. Run `terraform plan`. It should only show what really changed since that version. Fix any drift with `import` or `state rm`, never by deleting resources.
@@ -70,9 +69,9 @@ Covered by the deploy flow: `git revert <bad commit>` and push. See [Rollback in
 The bucket is versioned, so a delete only adds a delete marker. Remove the marker to bring the object back:
 
 ```bash
-aws s3api list-object-versions --bucket "$STATE_BUCKET" --prefix "$ENV/core.tfstate" \
+aws s3api list-object-versions --bucket "$STATE_BUCKET" --prefix "prod/core.tfstate" \
   --query 'DeleteMarkers[?IsLatest].VersionId' --output text
-aws s3api delete-object --bucket "$STATE_BUCKET" --key "$ENV/core.tfstate" --version-id <marker-id>
+aws s3api delete-object --bucket "$STATE_BUCKET" --key "prod/core.tfstate" --version-id <marker-id>
 ```
 
 Then run `terraform plan` and expect no changes.
@@ -89,30 +88,28 @@ ECR keeps the last 50 tagged images. To roll back past that window:
 
 The rebuilt image has the same tag, but not the same digest.
 
-### 6. The cluster is lost (or a whole environment is rebuilt)
+### 6. The cluster is lost (or the whole platform is rebuilt)
 
 1. **Infrastructure:** re-run the pipeline, or as an operator:
 
    ```bash
-   terraform -chdir=infra/core apply \
-     -var environment=$ENV -var-file=../environments/$ENV/terraform.tfvars
+   terraform -chdir=infra/environments/prod apply
    ```
 
    With the state intact, Terraform recreates only what's missing (the cluster, node group, add-ons).
-2. **Deploy key:** check that `$ENV/argocd/repo-deploy-key` still has a value in Secrets Manager. If it was deleted less than 30 days ago:
+2. **Deploy key:** check that `prod/argocd/repo-deploy-key` still has a value in Secrets Manager. If it was deleted less than 30 days ago:
 
    ```bash
-   aws secretsmanager restore-secret --secret-id "$ENV/argocd/repo-deploy-key"
+   aws secretsmanager restore-secret --secret-id "prod/argocd/repo-deploy-key"
    ```
 
    Otherwise create a new key pair, following step 3 of [infra/README.md](../infra/README.md).
 3. **GitOps:** re-run `infra/gitops-bootstrap` from inside the VPC. Its state may point at the old cluster, so start clean:
 
    ```bash
-   terraform -chdir=infra/gitops-bootstrap init -reconfigure \
-     -backend-config=../environments/$ENV/backend.hcl -backend-config=key=$ENV/gitops-bootstrap.tfstate
+   terraform -chdir=infra/gitops-bootstrap init -backend-config=../environments/prod/backend.hcl
    terraform -chdir=infra/gitops-bootstrap state list   # then remove stale entries with `state rm`
-   terraform -chdir=infra/gitops-bootstrap apply -var environment=$ENV \
+   terraform -chdir=infra/gitops-bootstrap apply \
      -var state_bucket=$STATE_BUCKET -var gitops_repo_url=git@github.com:<owner>/<repo>.git
    ```
 

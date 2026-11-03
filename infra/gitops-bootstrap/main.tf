@@ -24,8 +24,8 @@ terraform {
     }
   }
 
-  # Key from the command line: -backend-config=key=<env>/gitops-bootstrap.tfstate
   backend "s3" {
+    key          = "prod/gitops-bootstrap.tfstate"
     encrypt      = true
     use_lockfile = true
   }
@@ -35,7 +35,7 @@ data "terraform_remote_state" "core" {
   backend = "s3"
   config = {
     bucket = var.state_bucket
-    key    = "${var.environment}/core.tfstate"
+    key    = "prod/core.tfstate"
     region = var.region
   }
 }

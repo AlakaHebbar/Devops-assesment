@@ -4,14 +4,8 @@ variable "project" {
 }
 
 variable "environment" {
-  description = "Must match the state key (<environment>/core.tfstate). CI sets it from the matrix."
-  type        = string
-  default     = "prod"
-
-  validation {
-    condition     = contains(["dev", "uat", "prod"], var.environment)
-    error_message = "environment must be dev, uat or prod."
-  }
+  type    = string
+  default = "prod"
 }
 
 variable "region" {

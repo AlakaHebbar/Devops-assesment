@@ -23,6 +23,8 @@ Each item has three parts:
 | 12 | Security | 3.4 | [Not every secret is in the CI secret store](#12-not-every-secret-is-in-the-ci-secret-store) |
 | 13 | Security | — | [The account ID is in Git](#13-the-account-id-is-in-git) |
 | 14 | CD | — | [Argo CD polls Git, and its UI has no SSO](#14-argo-cd-polls-git-and-its-ui-has-no-sso) |
+| 15 | Reliability | — | [Backup and restore is a runbook, not automation](#15-backup-and-restore-is-a-runbook-not-automation) |
+| 16 | Reliability | — | [Chaos testing is a plan, not automation](#16-chaos-testing-is-a-plan-not-automation) |
 
 ## 1. A new image and deploy on every push
 
@@ -165,3 +167,31 @@ Each item has three parts:
 **Improvement:**
 - A GitHub webhook to `argocd-server` (behind the WAF) for near-instant syncs.
 - Dex or OIDC SSO with RBAC, then disable the local admin.
+
+## 15. Backup and restore is a runbook, not automation
+
+**Today:** the service is stateless, so recovery means rebuilding from Git and the Terraform state. [backup-and-restore.md](backup-and-restore.md) lists what can be lost, how each piece is protected (state bucket versioning, `prevent_destroy`, immutable ECR tags, Secrets Manager and KMS recovery windows), and the commands to recover from nine scenarios, from a bad release to losing the cluster.
+
+**Risk:**
+- Every copy lives in the same account and region. A compromised admin or a region outage takes the state bucket with it.
+- The `infra/bootstrap` state is a local file.
+- The procedures haven't been drilled, so the 1-hour rebuild estimate is unproven.
+
+**Improvement:**
+- Replicate the state bucket to a separate backup account with S3 Cross-Region Replication and Object Lock.
+- Move the bootstrap state into the bucket (see item 7).
+- Run the drills listed in the runbook and record the real recovery time.
+- Add Velero, or AWS Backup for a database, once anything stateful appears.
+
+## 16. Chaos testing is a plan, not automation
+
+**Today:** [chaos-test-plan.md](chaos-test-plan.md) defines ten experiments (pod, node and AZ loss, CPU load, a bad release, Argo CD and CoreDNS outages), each with the protection it tests, the expected result, commands and abort rules. Nothing runs them automatically, and there is no non-production environment to run them in first.
+
+**Risk:**
+- The reliability features (PDB, HPA, zone spread, zonal shift) are designed but unproven under failure.
+- The plan itself predicts two weak spots: the zone spread rule (`DoNotSchedule`) can leave pods Pending after an AZ loss, and the fixed-size node group caps what the HPA can add.
+
+**Improvement:**
+- Run the plan, starting with the least disruptive experiments, and fix what it finds.
+- Codify the experiments as AWS FIS templates in Terraform, with a CloudWatch alarm as the stop condition, and run them on a schedule.
+- Add a production-shaped test environment so experiments don't have to start in production.

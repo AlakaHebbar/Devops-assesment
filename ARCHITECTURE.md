@@ -38,20 +38,19 @@ The service is stateless, so there is no database.
 
 | Item | Status | Where |
 |---|---|---|
-| Well-structured, reusable infrastructure code | Built | 9 modules in [`infra/modules`](infra/modules), composed by one stack, [`infra/core`](infra/core) |
+| Well-structured, reusable infrastructure code | Built | 9 modules in [`infra/modules`](infra/modules), composed by [`infra/environments/prod`](infra/environments/prod) |
 | Container vulnerability scanning | Built | Trivy gate on CRITICAL plus a CRITICAL/HIGH report in GitHub code scanning ([`app-ci.yml`](.github/workflows/app-ci.yml)); ECR scan on push |
-| Multiple environments from the same code | Built (Terraform); documented (Kubernetes overlays) | [architecture/environments.md](architecture/environments.md) |
-| Deployment strategy and why | Rolling update, documented | [architecture/deployment-strategy.md](architecture/deployment-strategy.md) |
-| Chaos engineering tests | Test plan | [architecture/chaos-test-plan.md](architecture/chaos-test-plan.md) |
-| Backup and restore procedures | Runbook | [architecture/backup-and-restore.md](architecture/backup-and-restore.md) |
+| Deployment strategy and why | Rolling update | [Deployment strategy](#deployment-strategy-rolling-update) |
+| Backup and restore procedures | Runbook | [backup-and-restore.md](architecture/backup-and-restore.md), [room for improvement #15](architecture/room-for-improvement.md#15-backup-and-restore-is-a-runbook-not-automation) |
+| Chaos engineering tests | Test plan | [chaos-test-plan.md](architecture/chaos-test-plan.md), [room for improvement #16](architecture/room-for-improvement.md#16-chaos-testing-is-a-plan-not-automation) |
 
 ## Stacks and apply order
 
 | # | Stack | State | What it creates |
 |---|---|---|---|
 | 1 | [`infra/bootstrap`](infra/bootstrap) | local | S3 bucket + KMS key for Terraform state (versioned, TLS-only, public access blocked, S3 native locking) |
-| 2 | [`infra/core`](infra/core), configured per environment from [`infra/environments/<env>`](infra/environments) | `<env>/core.tfstate` | VPC, EKS, ECR, IAM, Route 53/ACM/WAF, log bucket, alarms |
-| 3 | [`infra/gitops-bootstrap`](infra/gitops-bootstrap) | `<env>/gitops-bootstrap.tfstate` | **Once, by an operator.** Installs Argo CD, its repository and cluster Secrets, the AppProjects and the root application |
+| 2 | [`infra/environments/prod`](infra/environments/prod) | `prod/core.tfstate` | VPC, EKS, ECR, IAM, Route 53/ACM/WAF, log bucket, alarms |
+| 3 | [`infra/gitops-bootstrap`](infra/gitops-bootstrap) | `prod/gitops-bootstrap.tfstate` | **Once, by an operator.** Installs Argo CD, its repository and cluster Secrets, the AppProjects and the root application |
 | 4 | [`k8s/platform/`](k8s/platform) | Git | Argo CD ApplicationSets: AWS Load Balancer Controller, external-dns, metrics-server, Fluent Bit, Argo CD itself, and the service |
 | 5 | [`k8s/`](k8s) | Git | The service's manifests, deployed and kept in sync by Argo CD |
 
@@ -59,7 +58,7 @@ The service is stateless, so there is no database.
 - **Stack 2:** after the first apply by an operator, which creates the CI roles, the [infra pipeline](#infrastructure-pipeline-githubworkflowsinfrayml) owns it.
 - **Stacks 4 and 5** are Git: Argo CD applies every change.
 
-Stacks 1–3 are applied once per environment (dev, uat, prod), each in its own AWS account; see [architecture/environments.md](architecture/environments.md). Step-by-step commands are in [infra/README.md](infra/README.md).
+Step-by-step commands are in [infra/README.md](infra/README.md).
 
 ## What was created and why
 
@@ -76,8 +75,8 @@ To use another region, change it everywhere it's set. The AZ names must belong t
 | Where | Setting |
 |---|---|
 | [`infra/bootstrap/variables.tf`](infra/bootstrap/variables.tf) | `region` (state bucket) |
-| [`infra/core/variables.tf`](infra/core/variables.tf) / each environment's `terraform.tfvars` | `region`, `azs` |
-| `infra/environments/<env>/backend.hcl` | `region` of the state bucket |
+| [`infra/environments/prod/variables.tf`](infra/environments/prod/variables.tf) / `terraform.tfvars` | `region`, `azs` |
+| `infra/environments/prod/backend.hcl` | `region` of the state bucket |
 | [`infra/gitops-bootstrap/variables.tf`](infra/gitops-bootstrap/variables.tf) | `region` |
 | GitHub Actions variable | `AWS_REGION` |
 
@@ -163,6 +162,65 @@ Environment values are kept out of the manifests:
   - The CIDR patch starts with a JSON-patch `test` on the expected default, so if the manifest's layout changes, the sync fails loudly instead of patching the wrong rule.
 
 Restricted Pod Security Standard on the namespace. Non-root UID 1001, read-only root filesystem, all capabilities dropped, seccomp `RuntimeDefault`. Startup, readiness and liveness probes on `/api/health`. Resource requests and limits. Pods are spread across zones and hosts. **HPA** scales between 3 and 12 replicas. A **PDB** keeps at least 2 pods up. Rolling updates use `maxUnavailable: 0` and a `preStop` delay so the ALB drains a pod before it stops. A **NetworkPolicy** allows ingress only from the VPC on port 3000.
+
+### Deployment strategy: rolling update
+
+**Choice:** a Kubernetes rolling update that never drops below the desired number of ready pods. It's configured in [`deployment.yaml`](k8s/deployment.yaml):
+
+```yaml
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%        # with 3 replicas: 1 extra pod at a time
+    maxUnavailable: 0    # never fewer ready pods than desired
+```
+
+#### Why rolling update
+
+| Need | How a rolling update meets it |
+|---|---|
+| **Zero downtime** | `maxUnavailable: 0`: an old pod is removed only after a new one passes its readiness probe. |
+| **Low cost** | It needs one extra pod during a rollout. Blue-green needs a full second copy of the service for the whole switch. |
+| **Simple** | It's built into Kubernetes, and Argo CD already shows its progress. No extra controller or CRDs to run, upgrade and secure. |
+| **Fits the app** | The service is stateless, with no database and no schema migrations. Old and new versions can serve side by side for the minute a rollout takes. |
+| **Fits the rollback model** | A rollback is a `git revert`, which is just another rolling update to the previous image. |
+
+#### How a rollout runs
+
+1. The deploy commit changes the image tag, and Argo CD applies it.
+2. Kubernetes starts **one** new pod (25% of 3, rounded up).
+3. The **startup probe** gives it up to 60 s to boot. Then the **readiness probe** on `/api/health` must pass before it receives traffic. The ALB health-checks it too, through `target-type: ip`.
+4. Only then is an old pod terminated:
+   - its `preStop` sleep (10 s) gives the AWS Load Balancer Controller time to deregister it from the ALB;
+   - the ALB drains in-flight requests (`deregistration_delay` 30 s);
+   - the process then gets SIGTERM, inside the 30 s grace period.
+5. Repeat until every pod runs the new version. The **PDB** (`minAvailable: 2`) still protects the service if a node drain happens during the rollout.
+6. After the sync, the PostSync **smoke test** calls `/api/health` through the Service.
+
+**A bad release stops itself.** If new pods never become ready (crash, failed probe, missing image), the rollout stalls. The old pods keep serving, because none were removed. Argo CD shows the app as Progressing, then Degraded, and someone reverts the commit.
+
+**What it doesn't catch:** a release that passes `/api/health` but fails real requests (5xx, slow pages). It reaches 100% of traffic, because there's no traffic analysis.
+
+#### Alternatives considered
+
+| Strategy | Why not now |
+|---|---|
+| **Recreate** | Stops every old pod before starting new ones, so every release is an outage. |
+| **Blue-green** | Instant switch and instant switch-back, but it doubles capacity during each release. Switching ALB traffic needs Argo Rollouts or a second Service and Ingress. A bad release still hits 100% of users at once, just with a faster way back. |
+| **Canary** | The best protection, since only a slice of traffic sees the new version first. But it needs Argo Rollouts, ALB weighted target groups, and metrics to judge the canary (5xx rate and latency). There are no ALB 5xx or latency alarms yet. A canary without analysis is just a slower rolling update. |
+
+#### When to move to canary
+
+Move to a canary once the service has real traffic and ALB metrics. The upgrade path is short:
+1. Install Argo Rollouts with an ApplicationSet in `k8s/platform/`.
+2. Replace the Deployment with a `Rollout`: `canary` with `trafficRouting.alb`, steps of 10% → 50% → 100%, with pauses.
+3. Add an `AnalysisTemplate` that queries CloudWatch for ALB 5xx and p95 latency. A failed analysis aborts and shifts traffic back automatically.
+
+This also closes items 3 and 4 in [room-for-improvement.md](architecture/room-for-improvement.md).
+
+#### Known gap: ALB pod readiness gate
+
+The namespace doesn't have the label `elbv2.k8s.aws/pod-readiness-gate-inject: enabled`. Without it, Kubernetes counts a new pod as ready once its own probe passes, which can be a few seconds before the ALB marks the target healthy. With `maxUnavailable: 0` and three replicas, the service still has healthy targets throughout, but adding the label makes each step wait for the ALB as well. It's a one-line change to [`namespace.yaml`](k8s/namespace.yaml).
 
 ### Container image: [`application/Dockerfile`](application/Dockerfile)
 
@@ -261,16 +319,15 @@ Each has automated sync with prune and self-heal, and pinned chart versions. Fai
 
 | Event | Jobs |
 |---|---|
-| Pull request touching `infra/` | `terraform fmt -check`, `init -backend=false` + `validate` on every stack, `tflint` (recommended + AWS rulesets). Then a `plan` of the core stack for each configured environment, with that environment's read-only plan role (`-lock=false`), each posted as a sticky PR comment. |
-| Push to `main` (after merge) | `apply` per environment, one at a time: dev, uat, then prod. Each runs in its GitHub environment (`dev`, `uat`, `production`); `production` waits for a required reviewer. A failure cancels the later environments. |
+| Pull request touching `infra/` | `terraform fmt -check`, `init -backend=false` + `validate` on every stack, `tflint` (recommended + AWS rulesets). Then `plan` of the core stack with the read-only plan role (`-lock=false`), posted as a sticky PR comment. |
+| Push to `main` (after merge) | `apply` in the GitHub `production` environment, which waits for a required reviewer. It re-plans and applies the core stack. |
 
-- **What it manages:** the core stack only, in every environment, all through AWS APIs. Jobs run on GitHub-hosted runners. The gitops-bootstrap stack is validated here, but applied once by an operator: it's the only Terraform that talks to Kubernetes.
+- **What it manages:** the core stack only, all through AWS APIs. Jobs run on GitHub-hosted runners. The gitops-bootstrap stack is validated here, but applied once by an operator: it's the only Terraform that talks to Kubernetes.
 - **Roles** ([`modules/ci-terraform`](infra/modules/ci-terraform)):
-  - **`ci-terraform-plan`** is trusted only for `repo:<repo>:pull_request`. It has `ReadOnlyAccess`, plus read access on **one** state object (its environment's `<env>/core.tfstate`) and the state KMS key.
+  - **`ci-terraform-plan`** is trusted only for `repo:<repo>:pull_request`. It has `ReadOnlyAccess`, plus read access on **one** state object (`prod/core.tfstate`) and the state KMS key.
     - An explicit deny blocks every other S3 object read. Application logs stay out of reach, and so does the gitops-bootstrap state, which holds the Argo CD deploy key.
     - PRs from forks get no OIDC token, so they never reach it.
-  - **`ci-terraform-apply`** is trusted only for its GitHub environment, `repo:<repo>:environment:<dev|uat|production>`. For prod, GitHub won't issue the token until the `production` reviewers approve.
-  - Each environment has its own pair of roles, in its own account.
+  - **`ci-terraform-apply`** is trusted only for `repo:<repo>:environment:production`, so GitHub won't issue the token until the environment's reviewers approve.
   - Neither role has an EKS access entry.
 - **Bootstrapping:** the first core apply is run by an operator, because it creates these roles. From then on the pipeline owns the core stack.
 
@@ -282,11 +339,9 @@ There are no secrets in the repository; gitleaks scans every push and PR ([`secu
 |---|---|---|
 | `AWS_REGION`, `ECR_REPOSITORY` | variable | e.g. `us-east-1`, `next-bff-service` |
 | `AWS_IMAGE_PUBLISHER_ROLE_ARN` | variable | core output `ci_image_publisher_role_arn` |
-| `<ENV>_TERRAFORM_PLAN_ROLE_ARN`, `<ENV>_TERRAFORM_APPLY_ROLE_ARN` | variable | that environment's core outputs `terraform_plan_role_arn`, `terraform_apply_role_arn` |
-| `<ENV>_TF_STATE_BUCKET`, `<ENV>_TF_STATE_KMS_KEY_ARN` | variable | that account's bootstrap outputs |
-| `<ENV>_TFVARS` | secret | contents of `infra/environments/<env>/terraform.tfvars` |
-
-`<ENV>` is `DEV`, `UAT` or `PROD`. An environment is planned and applied only once its `<ENV>_TFVARS` secret exists.
+| `AWS_TERRAFORM_PLAN_ROLE_ARN`, `AWS_TERRAFORM_APPLY_ROLE_ARN` | variable | core outputs `terraform_plan_role_arn`, `terraform_apply_role_arn` |
+| `TF_STATE_BUCKET`, `TF_STATE_KMS_KEY_ARN` | variable | bootstrap outputs |
+| `PROD_TFVARS` | secret | contents of `infra/environments/prod/terraform.tfvars` |
 
 Role ARNs are not secrets, but keeping them in variables keeps account IDs out of the repo. The Argo CD deploy key and application secrets live in AWS Secrets Manager.
 
@@ -294,12 +349,12 @@ Role ARNs are not secrets, but keeping them in variables keeps account IDs out o
 
 Known gaps against the requirements, and trade-offs of following them exactly, are in [architecture/room-for-improvement.md](architecture/room-for-improvement.md).
 
-- **Region / account**: one region, `us-east-1`, is assumed (see [Region](#region-us-east-1-assumed) for how to change it), with no multi-region failover. Each environment (dev, uat, prod) runs in its own account from the same `infra/core` stack ([architecture/environments.md](architecture/environments.md)).
+- **Region / account**: one region, `us-east-1`, is assumed (see [Region](#region-us-east-1-assumed) for how to change it), with no multi-region failover. Run production in a dedicated account and keep non-production in separate accounts with their own `environments/<env>` directory.
 - **Reaching the private API**: only humans need it, for the one-time `infra/gitops-bootstrap` and for `kubectl` debugging. They run from inside the VPC (VPN or SSM port-forward). Alternatively, set `eks_endpoint_public_access` to an office/VPN CIDR.
 - **Node autoscaling**: the node group has fixed min/max values. Add Karpenter or Cluster Autoscaler (with its own Pod Identity role) before relying on the HPA ceiling.
 - **ALB alarms and access logs**: the ALB is created by the controller, so 5xx/latency alarms and ALB access logs (these need an SSE-S3 bucket) are added once its name is known.
 - **Argo CD access**: add SSO (Dex or OIDC against the identity provider) and RBAC, then disable the local admin. Add a GitHub webhook to cut the 3-minute poll, and Argo CD Notifications (Slack or SNS) for sync failures.
-- **Progressive delivery**: Argo Rollouts with an ALB canary and analysis on 5xx rate would let failed releases roll back automatically, rather than through a revert commit. Why the rolling update comes first: [architecture/deployment-strategy.md](architecture/deployment-strategy.md).
+- **Progressive delivery**: Argo Rollouts with an ALB canary and analysis on 5xx rate would let failed releases roll back automatically, rather than through a revert commit. See [Deployment strategy](#deployment-strategy-rolling-update) for why the rolling update comes first.
 - **Supply chain**: sign images with cosign in CI, and enforce signatures in the cluster (e.g. Kyverno).
 - **Apply role scope**: `ci-terraform-apply` has `AdministratorAccess`. Replace it with a scoped policy or a permissions boundary once the set of resource types settles. Add an SCP or boundary that denies `eks:CreateAccessEntry` and `eks:AssociateAccessPolicy` to CI roles, so they can't grant themselves cluster access.
 - **Branch protection**: require PRs and status checks on `main`, and allow only the Actions bot to push deploy commits (a ruleset bypass).

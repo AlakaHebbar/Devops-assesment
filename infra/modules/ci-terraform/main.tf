@@ -1,7 +1,7 @@
 # Roles the infrastructure pipeline (.github/workflows/infra.yml) assumes with
 # GitHub OIDC. Pull requests get a read-only plan role; only jobs running in the
-# environment's GitHub environment (`production` for prod, with required
-# reviewers) can assume the apply role. One pair of roles per environment.
+# protected `production` GitHub environment (required reviewers) can assume the
+# apply role, so nothing changes before a merge plus an approval.
 #
 # Both roles act on AWS APIs only. Neither has an EKS access entry: CI never
 # authenticates to the Kubernetes API, Argo CD is the only thing that changes

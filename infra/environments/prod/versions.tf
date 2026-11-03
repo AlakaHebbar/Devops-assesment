@@ -8,11 +8,9 @@ terraform {
     }
   }
 
-  # One state file per environment, so the key is not fixed here. The bucket
-  # comes from backend.hcl (see infra/environments/<env>/backend.hcl.example),
-  # the key from the command line:
-  #   terraform init -backend-config=backend.hcl -backend-config=key=<env>/core.tfstate
+  # Values come from `terraform init -backend-config=backend.hcl` (see backend.hcl.example).
   backend "s3" {
+    key          = "prod/core.tfstate"
     encrypt      = true
     use_lockfile = true
   }
