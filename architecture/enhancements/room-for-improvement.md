@@ -11,7 +11,7 @@ Each item has three parts:
 |---|---|---|---|
 | 1 | CI | 3.1 | [A new image and deploy on every push](#1-a-new-image-and-deploy-on-every-push) |
 | 2 | CD | 3.2 | [Rollback means a rebuild](#2-rollback-means-a-rebuild) |
-| 3 | CI | 3.1, 3.3, 3.4 | [The deploy commit can't get past the main ruleset](#3-the-deploy-commit-cant-get-past-the-main-ruleset) |
+| 3 | CI | 3.1, 3.3, 3.4 | [The deploy commit and ruleset](#3-the-deploy-commit-and-ruleset) |
 | 4 | Reliability | — | [Backup and restore is a runbook, not automation](#4-backup-and-restore-is-a-runbook-not-automation) |
 | 5 | Reliability | — | [Chaos testing is a plan, not automation](#5-chaos-testing-is-a-plan-not-automation) |
 
@@ -36,9 +36,9 @@ Each item has three parts:
 
 **Improvement:** a dedicated rollback workflow (`workflow_dispatch`, input: target SHA) that checks the image exists in ECR and commits that tag. It has no build, no flags to remember, and leaves an audit trail.
 
-## 3. The deploy commit can't get past the main ruleset
+## 3. The deploy commit and ruleset
 
-**Today:** this is handled in GitHub settings. [`update-image-tag.sh`](../../.github/scripts/update-image-tag.sh) still pushes the deploy commit straight to `main` with `GITHUB_TOKEN`, and `GITHUB_TOKEN` can't be a ruleset bypass actor.
+**Today:** this is handled in GitHub settings. [`update-image-tag.sh`](../../.github/scripts/update-image-tag.sh) still pushes the deploy commit straight to `main` with `GITHUB_TOKEN`
 
 **Improvement:**
 - Push deploy commits as a dedicated GitHub App (contents: write, minted with `actions/create-github-app-token`), and make it the only bypass actor on `protect-main`.
