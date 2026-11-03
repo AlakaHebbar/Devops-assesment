@@ -41,8 +41,8 @@ The service is stateless, so there is no database.
 | Well-structured, reusable infrastructure code | Built | 9 modules in [`infra/modules`](infra/modules), composed by [`infra/environments/prod`](infra/environments/prod) |
 | Container vulnerability scanning | Built | Trivy gate on CRITICAL plus a CRITICAL/HIGH report in GitHub code scanning ([`app-ci.yml`](.github/workflows/app-ci.yml)); ECR scan on push |
 | Deployment strategy and why | Rolling update | [Deployment strategy](#deployment-strategy-rolling-update) |
-| Backup and restore procedures | Runbook | [backup-and-restore.md](architecture/enhancements/backup-and-restore.md), [room for improvement #15](architecture/enhancements/room-for-improvement.md#15-backup-and-restore-is-a-runbook-not-automation) |
-| Chaos engineering tests | Test plan | [chaos-test-plan.md](architecture/enhancements/chaos-test-plan.md), [room for improvement #16](architecture/enhancements/room-for-improvement.md#16-chaos-testing-is-a-plan-not-automation) |
+| Backup and restore procedures | Runbook | [backup-and-restore.md](architecture/enhancements/backup-and-restore.md), [room for improvement #4](architecture/enhancements/room-for-improvement.md#4-backup-and-restore-is-a-runbook-not-automation) |
+| Chaos engineering tests | Test plan | [chaos-test-plan.md](architecture/enhancements/chaos-test-plan.md), [room for improvement #5](architecture/enhancements/room-for-improvement.md#5-chaos-testing-is-a-plan-not-automation) |
 
 ## Stacks and apply order
 
@@ -217,8 +217,6 @@ Move to a canary once the service has real traffic and ALB metrics. The upgrade 
 2. Replace the Deployment with a `Rollout`: `canary` with `trafficRouting.alb`, steps of 10% → 50% → 100%, with pauses.
 3. Add an `AnalysisTemplate` that queries CloudWatch for ALB 5xx and p95 latency. A failed analysis aborts and shifts traffic back automatically.
 
-This also closes items 3 and 4 in [room-for-improvement.md](architecture/enhancements/room-for-improvement.md).
-
 #### Known gap: ALB pod readiness gate
 
 The namespace doesn't have the label `elbv2.k8s.aws/pod-readiness-gate-inject: enabled`. Without it, Kubernetes counts a new pod as ready once its own probe passes, which can be a few seconds before the ALB marks the target healthy. With `maxUnavailable: 0` and three replicas, the service still has healthy targets throughout, but adding the label makes each step wait for the ALB as well. It's a one-line change to [`namespace.yaml`](k8s/namespace.yaml).
@@ -358,4 +356,3 @@ Known gaps against the requirements, and trade-offs of following them exactly, a
 - **Progressive delivery**: Argo Rollouts with an ALB canary and analysis on 5xx rate would let failed releases roll back automatically, rather than through a revert commit. See [Deployment strategy](#deployment-strategy-rolling-update) for why the rolling update comes first.
 - **Supply chain**: sign images with cosign in CI, and enforce signatures in the cluster (e.g. Kyverno).
 - **Apply role scope**: `ci-terraform-apply` has `AdministratorAccess`. Replace it with a scoped policy or a permissions boundary once the set of resource types settles. Add an SCP or boundary that denies `eks:CreateAccessEntry` and `eks:AssociateAccessPolicy` to CI roles, so they can't grant themselves cluster access.
-- **Branch protection**: require PRs and status checks on `main`, and allow only the Actions bot to push deploy commits (a ruleset bypass).
