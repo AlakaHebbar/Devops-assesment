@@ -5,6 +5,10 @@ A stateless Next.js service (`next-bff-service`) running on Amazon EKS and deliv
 - `k8s/` holds the service manifests. `k8s/platform/` holds the Argo CD ApplicationSets for the add-ons and the service. Argo CD deploys both.
 - `.github/workflows/` holds the CI pipelines.
 
+**Where each requirement is met:** [ARCHITECTURE.md § Requirements checklist](ARCHITECTURE.md#requirements-checklist).
+
+**Prerequisites:** Docker with Compose for the local run. For the infrastructure: Terraform ≥ 1.10, the AWS CLI and kubectl (see [infra/README.md](infra/README.md)).
+
 ## Layout
 
 ```
@@ -20,22 +24,22 @@ devops-challenge/
 └── ARCHITECTURE.md
 ```
 
-Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md). Provisioning steps: [infra/README.md](infra/README.md). Diagram: [architecture/README.md](architecture/README.md).
+Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md). Provisioning steps: [infra/README.md](infra/README.md). Diagrams: [architecture/README.md](architecture/README.md).
 
 ## Local run
 
 ```bash
-cp .env.example .env
-# set IMAGE_REGISTRY, IMAGE_NAME, and IMAGE_TAG (version or git SHA, not only latest)
 docker compose up --build
 ```
+
+No `.env` is needed: every setting has a default (image `local/next-bff-service:0.1.0`, port 3000). The `.env` file is only for pushing to ECR (below).
 
 - App: http://localhost:3000
 - Health: http://localhost:3000/api/health
 
 The image runs as user `nextjs` (uid 1001). The Dockerfile `HEALTHCHECK` calls `/api/health`.
 
-## Build, tag, and push to ECR (Part 1)
+## Build, tag, and push to ECR (Part 2.2)
 
 Images are named `${IMAGE_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}`. Use a version or commit SHA, not only `latest`.
 
@@ -71,7 +75,7 @@ push to main ─▶ app-ci: lint · build ─▶ Trivy · push ECR :<sha> ─▶
 
   For an emergency rollback without a build, see [Rollback](ARCHITECTURE.md#gitops-argo-cd).
 - **Infrastructure:**
-  - Open a PR that touches `infra/`, and the plans are posted as comments.
+  - Open a PR that touches `infra/`: format, validate and tflint run on every stack, and the core-stack plan is posted as a PR comment.
   - After the merge, approve the `production` environment deployment to apply.
 - **Secrets:** none are committed. CI configuration lives in GitHub Actions variables and secrets (listed in [ARCHITECTURE.md](ARCHITECTURE.md#secrets-and-ci-configuration)). The Argo CD deploy key and app secrets live in AWS Secrets Manager.
 
