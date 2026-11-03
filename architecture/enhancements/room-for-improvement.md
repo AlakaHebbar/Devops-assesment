@@ -38,15 +38,7 @@ Each item has three parts:
 
 ## 3. The deploy commit can't get past the main ruleset
 
-**Today:** this is handled in GitHub settings:
-- The `protect-main` ruleset requires a pull request for every change to `main`, so a direct `git push origin main` is rejected. It also blocks deleting or force-pushing `main`.
-- The `production` environment requires a reviewer's approval and accepts deployments only from `main`. Terraform `apply` cannot run without that approval.
-
-[`update-image-tag.sh`](../../.github/scripts/update-image-tag.sh) still pushes the deploy commit straight to `main` with `GITHUB_TOKEN`, and `GITHUB_TOKEN` can't be a ruleset bypass actor.
-
-**Risk:**
-- The ruleset rejects the deploy commit, so `update-manifests` fails and new images are not deployed.
-- Admins can bypass the `production` environment's protection rules.
+**Today:** this is handled in GitHub settings. [`update-image-tag.sh`](../../.github/scripts/update-image-tag.sh) still pushes the deploy commit straight to `main` with `GITHUB_TOKEN`, and `GITHUB_TOKEN` can't be a ruleset bypass actor.
 
 **Improvement:**
 - Push deploy commits as a dedicated GitHub App (contents: write, minted with `actions/create-github-app-token`), and make it the only bypass actor on `protect-main`.
