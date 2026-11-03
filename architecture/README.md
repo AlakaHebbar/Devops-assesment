@@ -3,7 +3,9 @@
 ![Infrastructure diagram](infrastructure.png)
 
 - **Narrative and rationale:** [../ARCHITECTURE.md](../ARCHITECTURE.md).
-- **Known gaps and trade-offs:** [room-for-improvement.md](room-for-improvement.md).
+- **Known gaps and trade-offs:** [room-for-improvement.md](enhancements/room-for-improvement.md).
+- **Backup and restore runbook:** [backup-and-restore.md](enhancements/backup-and-restore.md).
+- **Chaos test plan:** [chaos-test-plan.md](enhancements/chaos-test-plan.md).
 - **Repository layout and why it's split this way:** [repo-structure.pdf](repo-structure.pdf).
 
 | Diagram | Answers | Source | Image |
@@ -86,4 +88,4 @@ The bucket is private, KMS-encrypted and versioned, with lifecycle tiering. The 
 - **Zones:** three AZs, each with its own subnets and NAT gateway.
 - **Service:** at least 3 replicas spread across zones and hosts, HPA up to 12, PDB `minAvailable: 2`, and rolling updates with `maxUnavailable: 0`.
 - **Platform:** the controllers run 2 replicas each, all managed by Argo CD. Argo CD runs in HA mode: Redis HA, plus two replicas of the server, repo-server and ApplicationSet controller.
-- **Recovery:** Terraform state is versioned and every deploy is a Git commit, so the cluster can be rebuilt from Git plus state.
+- **Recovery:** Terraform state is versioned and every deploy is a Git commit, so the cluster can be rebuilt from Git plus state. Procedures: [backup-and-restore.md](enhancements/backup-and-restore.md).

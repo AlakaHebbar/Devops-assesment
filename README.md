@@ -15,7 +15,7 @@ devops-challenge/
 ├── .github/workflows/     # CI: app-ci, infra, security
 ├── docker-compose.yml
 ├── .env.example
-├── architecture/          # diagrams (draw.io source + PNG), repo-structure.pdf, room-for-improvement.md
+├── architecture/          # diagrams, repo-structure.pdf, enhancements/ (room for improvement, backup runbook, chaos plan)
 ├── README.md
 └── ARCHITECTURE.md
 ```
