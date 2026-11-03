@@ -49,9 +49,6 @@
         <mxCell id="priv2" parent="1" style="fontFamily=Inter;points=[];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=15;fontStyle=0;container=0;pointerEvents=0;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_security_group;strokeColor=#9ED9DC;fillColor=#F1F9FA;verticalAlign=top;align=left;spacingLeft=30;fontColor=#0E7C86;dashed=0;grStroke=0;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;strokeWidth=2;" value="Private subnet · 10.20.64.0/19" vertex="1">
           <mxGeometry height="440" width="360" x="1165" y="720" as="geometry" />
         </mxCell>
-        <mxCell id="P6oj03lQRHXnhD2T_47n-3" edge="1" parent="1" source="nat2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Inter;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;strokeColor=#6B7280;strokeWidth=2.5;fontColor=#4B5563;fontSize=14;fontStyle=1;labelBackgroundColor=#FFFFFF;endSize=9;endArrow=block;endFill=1;" target="alb" value="">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
         <mxCell id="nat2" parent="1" style="fontFamily=Inter;sketch=0;outlineConnect=0;fontColor=#1F2937;gradientColor=none;fillColor=#8C4FFF;strokeColor=none;dashed=0;html=1;fontSize=15;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.nat_gateway;verticalLabelPosition=bottom;verticalAlign=top;align=center;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;" value="NAT gateway" vertex="1">
           <mxGeometry height="45" width="45" x="1370" y="530" as="geometry" />
         </mxCell>
@@ -97,7 +94,7 @@
         <mxCell id="s3gw" parent="1" style="fontFamily=Inter;sketch=0;outlineConnect=0;fontColor=#1F2937;gradientColor=none;fillColor=#7AA116;strokeColor=none;dashed=0;html=1;fontSize=15;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.endpoints;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=6;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;" value="S3 gateway endpoint" vertex="1">
           <mxGeometry height="45" width="45" x="600" y="1175" as="geometry" />
         </mxCell>
-        <mxCell id="igw" parent="1" style="fontFamily=Inter;sketch=0;outlineConnect=0;fontColor=#1F2937;gradientColor=none;fillColor=#8C4FFF;strokeColor=none;dashed=0;html=1;fontSize=15;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.internet_gateway;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=6;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;" value="Internet gateway" vertex="1">
+        <mxCell id="igw" parent="1" style="fontFamily=Inter;sketch=0;outlineConnect=0;fontColor=#1F2937;gradientColor=none;fillColor=#8C4FFF;strokeColor=none;dashed=0;html=1;fontSize=15;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.internet_gateway;labelPosition=left;verticalLabelPosition=top;align=right;verticalAlign=bottom;spacingRight=-20;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;" value="Internet gateway" vertex="1">
           <mxGeometry height="60" width="60" x="1110" y="410" as="geometry" />
         </mxCell>
         <mxCell id="r53" parent="1" style="fontFamily=Inter;sketch=0;outlineConnect=0;fontColor=#1F2937;gradientColor=none;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;html=1;fontSize=15;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.route_53;labelPosition=right;verticalLabelPosition=middle;align=left;verticalAlign=middle;spacingLeft=6;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;" value="&lt;b&gt;Route 53&lt;/b&gt;&lt;br&gt;DNS" vertex="1">
@@ -238,8 +235,14 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="e14" edge="1" parent="1" source="argocd" style="fontFamily=Inter;edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;fontSize=14;labelBackgroundColor=#FFFFFF;strokeColor=#EC4899;strokeWidth=2.5;fontColor=#4B5563;exitX=0.2941;exitY=0;exitDx=0;exitDy=0;entryX=0.0385;entryY=1;entryDx=0;entryDy=0;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;fontStyle=1;endSize=9;" target="repo" value="Git pull (SSH)">
+        <mxCell id="e14" edge="1" parent="1" source="igw" style="fontFamily=Inter;edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;fontSize=14;labelBackgroundColor=#FFFFFF;strokeColor=#EC4899;strokeWidth=2.5;fontColor=#4B5563;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.0385;entryY=1;entryDx=0;entryDy=0;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;fontStyle=1;endSize=9;" target="repo" value="Argo CD Git pull (SSH)">
           <mxGeometry relative="1" as="geometry" x="0.55" />
+        </mxCell>
+        <mxCell id="egress_nat" edge="1" parent="1" source="argocd" target="nat2" style="fontFamily=Inter;edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;fontSize=14;labelBackgroundColor=#FFFFFF;strokeColor=#6B7280;strokeWidth=2.5;fontColor=#4B5563;fontStyle=1;endSize=9;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;exitX=0.85;exitY=0;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" value="egress 0.0.0.0/0">
+          <mxGeometry relative="1" as="geometry" x="0.45" />
+        </mxCell>
+        <mxCell id="egress_igw" edge="1" parent="1" source="nat2" target="igw" style="fontFamily=Inter;edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;fontSize=14;labelBackgroundColor=#FFFFFF;strokeColor=#6B7280;strokeWidth=2.5;fontColor=#4B5563;fontStyle=1;endSize=9;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;" value="">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e15" edge="1" parent="1" source="platform" style="fontFamily=Inter;edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;fontSize=14;labelBackgroundColor=#FFFFFF;strokeColor=#65A30D;strokeWidth=2.5;dashed=1;dashPattern=1 3;fontColor=#4B5563;exitX=0.8431;exitY=0;exitDx=0;exitDy=0;entryX=0.2585;entryY=1;entryDx=0;entryDy=0;fontSource=https%3A%2F%2Ffonts.googleapis.com%2Fcss%3Ffamily%3DInter;fontStyle=1;endSize=9;" target="alb" value="creates ALB">
           <mxGeometry relative="1" as="geometry" />
