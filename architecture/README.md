@@ -37,8 +37,8 @@ One AWS production account in one region, `us-east-1` (an assumption; see [Regio
 
 1. Every push to `main` starts **app-ci**, which lints and builds the app.
 2. The image and deploy jobs run next, on every push.
-3. They assume `ci-image-publisher` through GitHub OIDC, builds the image, scans it with Trivy (CRITICAL findings fail the job) and pushes `<ecr>/next-bff-service:<commit sha>`. ECR tags are immutable.
-4. It then runs `kustomize edit set image` in `k8s/` and pushes a `deploy(next-bff-service): <sha>` commit to `main`.
+3. They assume `ci-image-publisher` through GitHub OIDC, build the image, scan it with Trivy (CRITICAL findings fail the job) and push `<ecr>/next-bff-service:<commit sha>`. ECR tags are immutable.
+4. They then run `kustomize edit set image` in `k8s/` and push a `deploy(next-bff-service): <sha>` commit to `main`.
 5. **Argo CD** runs inside the cluster and polls `main` over SSH with a read-only deploy key. It applies `k8s/` with automated sync, prune and self-heal: manual changes in the cluster are reverted, and deleted manifests are removed.
 6. **Health:** the Deployment only becomes ready when the `/api/health` readiness probes pass. After each sync a PostSync Job calls `/api/health` through the Service, and a failure marks the sync as failed.
 7. **Rollback:** `git revert` the commit that broke the app. CI builds the reverted code and Argo CD deploys it. Emergency path: revert the deploy commit with `[skip ci]`, so Argo CD syncs the previous tag without a build.

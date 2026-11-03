@@ -2,6 +2,7 @@
 # control-plane logging and a managed node group in the private subnets.
 
 data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
 
 locals {
   policy_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
@@ -264,6 +265,13 @@ data "aws_iam_policy_document" "pod_identity_assume" {
     principals {
       type        = "Service"
       identifiers = ["pods.eks.amazonaws.com"]
+    }
+
+    # Only pods from this account's clusters may assume this role.
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
     }
   }
 }

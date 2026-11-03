@@ -130,8 +130,9 @@ Each workload gets its own IAM role, bound to its service account with **EKS Pod
 | `fluent-bit` | `logging/fluent-bit` | `s3:PutObject` under `eks/*` in the log bucket + use its KMS key |
 | `aws-load-balancer-controller` | `kube-system/aws-load-balancer-controller` | Upstream policy pinned to controller v3.6.0 |
 | `external-dns` | `kube-system/external-dns` | Change records in the service's hosted zone only |
+| `cloudwatch-agent` | `amazon-cloudwatch/cloudwatch-agent` | `CloudWatchAgentServerPolicy`, for Container Insights metrics. Defined in [`modules/eks`](infra/modules/eks/main.tf) with the add-on, same trust policy |
 
-The EKS cluster, nodes, VPC flow logs and the CloudWatch agent each have their own service roles inside their modules.
+The EKS cluster, nodes and VPC flow logs each have their own service roles inside their modules.
 
 ### Edge, DNS and TLS: [`modules/edge`](infra/modules/edge)
 
