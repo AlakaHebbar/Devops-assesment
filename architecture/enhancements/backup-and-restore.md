@@ -33,7 +33,7 @@ All commands below assume a shell in the production account with an admin role, 
 
 ### 1. A bad release
 
-Covered by the deploy flow: `git revert <bad commit>` and push. See [Rollback in ARCHITECTURE.md](../ARCHITECTURE.md#gitops-argo-cd). No backup is involved.
+Covered by the deploy flow: `git revert <bad commit>` and push. See [Rollback in ARCHITECTURE.md](../../ARCHITECTURE.md#gitops-argo-cd). No backup is involved.
 
 ### 2. Terraform state is corrupted, or a bad apply wrote it
 
@@ -103,7 +103,7 @@ The rebuilt image has the same tag, but not the same digest.
    aws secretsmanager restore-secret --secret-id "prod/argocd/repo-deploy-key"
    ```
 
-   Otherwise create a new key pair, following step 3 of [infra/README.md](../infra/README.md).
+   Otherwise create a new key pair, following step 3 of [infra/README.md](../../infra/README.md).
 3. **GitOps:** re-run `infra/gitops-bootstrap` from inside the VPC. Its state may point at the old cluster, so start clean:
 
    ```bash

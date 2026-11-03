@@ -49,7 +49,7 @@
 3. **Drain a node:** pick a node running app pods, then
    `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`. Afterwards: `kubectl uncordon <node>`.
 4. **Terminate a node:** run the FIS action `aws:eks:terminate-nodegroup-instances` with `instanceTerminationPercentage = 34`, or terminate one instance in the EC2 console.
-5. **Lose an AZ:** zonal shift is enabled on the cluster ([`modules/eks`](../infra/modules/eks/main.tf)). Shifting away from an AZ removes that zone's pods from the Service endpoints, so the Load Balancer Controller deregisters them from the ALB:
+5. **Lose an AZ:** zonal shift is enabled on the cluster ([`modules/eks`](../../infra/modules/eks/main.tf)). Shifting away from an AZ removes that zone's pods from the Service endpoints, so the Load Balancer Controller deregisters them from the ALB:
 
    ```bash
    aws arc-zonal-shift start-zonal-shift \
@@ -67,7 +67,7 @@
 ## Risks to check during the tests
 
 - **Zone spread vs. AZ loss (experiment 5).** The zone spread rule uses `whenUnsatisfiable: DoNotSchedule`. If an AZ's nodes are lost (not just shifted away from), replacement pods may stay Pending, because placing them in the other two zones would break `maxSkew: 1`. If that happens, change the zone rule to `ScheduleAnyway`, or rely on node autoscaling. This is the most likely finding of the plan.
-- **Fixed node count (experiment 6).** The HPA can go up to 12 replicas, but the node group has a fixed size. If pods go Pending, that confirms the "add Karpenter or Cluster Autoscaler" follow-up in [ARCHITECTURE.md](../ARCHITECTURE.md#production-assumptions-and-follow-ups).
+- **Fixed node count (experiment 6).** The HPA can go up to 12 replicas, but the node group has a fixed size. If pods go Pending, that confirms the "add Karpenter or Cluster Autoscaler" follow-up in [ARCHITECTURE.md](../../ARCHITECTURE.md#production-assumptions-and-follow-ups).
 - **No alert for a stalled rollout (experiment 7).** Nothing pages anyone yet. The "fewer than 2 running pods" alarm doesn't fire, because the old pods keep running.
 
 ## Automating it later

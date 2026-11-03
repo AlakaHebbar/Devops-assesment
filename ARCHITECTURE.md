@@ -41,8 +41,8 @@ The service is stateless, so there is no database.
 | Well-structured, reusable infrastructure code | Built | 9 modules in [`infra/modules`](infra/modules), composed by [`infra/environments/prod`](infra/environments/prod) |
 | Container vulnerability scanning | Built | Trivy gate on CRITICAL plus a CRITICAL/HIGH report in GitHub code scanning ([`app-ci.yml`](.github/workflows/app-ci.yml)); ECR scan on push |
 | Deployment strategy and why | Rolling update | [Deployment strategy](#deployment-strategy-rolling-update) |
-| Backup and restore procedures | Runbook | [backup-and-restore.md](architecture/backup-and-restore.md), [room for improvement #15](architecture/room-for-improvement.md#15-backup-and-restore-is-a-runbook-not-automation) |
-| Chaos engineering tests | Test plan | [chaos-test-plan.md](architecture/chaos-test-plan.md), [room for improvement #16](architecture/room-for-improvement.md#16-chaos-testing-is-a-plan-not-automation) |
+| Backup and restore procedures | Runbook | [backup-and-restore.md](architecture/enhancements/backup-and-restore.md), [room for improvement #15](architecture/enhancements/room-for-improvement.md#15-backup-and-restore-is-a-runbook-not-automation) |
+| Chaos engineering tests | Test plan | [chaos-test-plan.md](architecture/enhancements/chaos-test-plan.md), [room for improvement #16](architecture/enhancements/room-for-improvement.md#16-chaos-testing-is-a-plan-not-automation) |
 
 ## Stacks and apply order
 
@@ -216,7 +216,7 @@ Move to a canary once the service has real traffic and ALB metrics. The upgrade 
 2. Replace the Deployment with a `Rollout`: `canary` with `trafficRouting.alb`, steps of 10% → 50% → 100%, with pauses.
 3. Add an `AnalysisTemplate` that queries CloudWatch for ALB 5xx and p95 latency. A failed analysis aborts and shifts traffic back automatically.
 
-This also closes items 3 and 4 in [room-for-improvement.md](architecture/room-for-improvement.md).
+This also closes items 3 and 4 in [room-for-improvement.md](architecture/enhancements/room-for-improvement.md).
 
 #### Known gap: ALB pod readiness gate
 
@@ -312,7 +312,7 @@ Each has automated sync with prune and self-heal, and pinned chart versions. Fai
   ```
   - Immutable tags guarantee it's the same image as before. ECR keeps the last 50 tagged images, which sets how far back this can go.
   - The broken code is still on `main`: the next push rebuilds and redeploys it, so revert or fix the app commit next.
-  - Trade-offs are listed in [architecture/room-for-improvement.md](architecture/room-for-improvement.md).
+  - Trade-offs are listed in [architecture/enhancements/room-for-improvement.md](architecture/enhancements/room-for-improvement.md).
 - **Deleting an ApplicationSet or Application:** every ApplicationSet sets `preserveResourcesOnDeletion: true`. Without it, Argo CD adds a resources finalizer to generated Applications, so deleting an ApplicationSet file from Git, or the cluster Secret no longer matching its selector, would delete the running service. With it, removal leaves workloads running.
 
 ### Infrastructure pipeline: [`.github/workflows/infra.yml`](.github/workflows/infra.yml)
@@ -347,7 +347,7 @@ Role ARNs are not secrets, but keeping them in variables keeps account IDs out o
 
 ## Production assumptions and follow-ups
 
-Known gaps against the requirements, and trade-offs of following them exactly, are in [architecture/room-for-improvement.md](architecture/room-for-improvement.md).
+Known gaps against the requirements, and trade-offs of following them exactly, are in [architecture/enhancements/room-for-improvement.md](architecture/enhancements/room-for-improvement.md).
 
 - **Region / account**: one region, `us-east-1`, is assumed (see [Region](#region-us-east-1-assumed) for how to change it), with no multi-region failover. Run production in a dedicated account and keep non-production in separate accounts with their own `environments/<env>` directory.
 - **Reaching the private API**: only humans need it, for the one-time `infra/gitops-bootstrap` and for `kubectl` debugging. They run from inside the VPC (VPN or SSM port-forward). Alternatively, set `eks_endpoint_public_access` to an office/VPN CIDR.

@@ -28,7 +28,7 @@ Each item has three parts:
 
 ## 1. A new image and deploy on every push
 
-**Today:** [`app-ci.yml`](../.github/workflows/app-ci.yml) builds, scans and pushes an image, then commits its tag, on every push to `main`. Pushes that change only docs or `k8s/` are included.
+**Today:** [`app-ci.yml`](../../.github/workflows/app-ci.yml) builds, scans and pushes an image, then commits its tag, on every push to `main`. Pushes that change only docs or `k8s/` are included.
 
 **Risk:**
 - A rolling restart with identical code on every docs change. Each one is a small availability risk and adds noise to the deploy history.
@@ -69,7 +69,7 @@ Each item has three parts:
 
 ## 5. Only files listed in kustomization.yaml are applied
 
-**Today:** Argo CD renders `k8s/` with Kustomize. A new manifest in `k8s/` is applied only once it's listed under `resources:` in [`kustomization.yaml`](../k8s/kustomization.yaml).
+**Today:** Argo CD renders `k8s/` with Kustomize. A new manifest in `k8s/` is applied only once it's listed under `resources:` in [`kustomization.yaml`](../../k8s/kustomization.yaml).
 
 **Risk:** someone adds a file and expects it to deploy. Nothing happens, and nothing reports an error.
 
@@ -77,7 +77,7 @@ Each item has three parts:
 
 ## 6. CI pushes straight to main
 
-**Today:** [`update-image-tag.sh`](../.github/scripts/update-image-tag.sh) pushes the deploy commit to `main` with `GITHUB_TOKEN`. `main` has no branch protection.
+**Today:** [`update-image-tag.sh`](../../.github/scripts/update-image-tag.sh) pushes the deploy commit to `main` with `GITHUB_TOKEN`. `main` has no branch protection.
 
 **Risk:**
 - Anyone with write access can push to `main`, which deploys straight to production.
@@ -87,7 +87,7 @@ Each item has three parts:
 
 ## 7. Not every stack is previewed
 
-**Today:** PRs run fmt, validate and tflint on all three stacks, but `plan` runs only on the core stack ([`infra.yml`](../.github/workflows/infra.yml)).
+**Today:** PRs run fmt, validate and tflint on all three stacks, but `plan` runs only on the core stack ([`infra.yml`](../../.github/workflows/infra.yml)).
 - `infra/bootstrap` uses local state held by an administrator.
 - `infra/gitops-bootstrap` uses the Kubernetes and Helm providers, so planning it would need cluster credentials, which 3.4 forbids.
 
